@@ -105,6 +105,10 @@ def _build_mounts(
     if config.container_socket:
         _add_container_socket(mounts, groups, uid)
 
+    # Clipboard support (for image pasting)
+    if config.clipboard:
+        _add_clipboard_support(mounts)
+
     # User-defined mounts
     for mount_spec in config.mounts:
         mounts.append(_parse_mount_spec(mount_spec, project_dir))
@@ -142,6 +146,31 @@ def _add_container_socket(mounts: list[Mount], groups: list[int], uid: int) -> N
 
     console.print(
         "[yellow]Warning: No container socket found, docker/podman won't work inside sandbox[/]"
+    )
+
+
+def _add_clipboard_support(mounts: list[Mount]) -> None:
+    """Mount display sockets for clipboard access (Wayland or X11)."""
+    wayland_display = os.environ.get("WAYLAND_DISPLAY")
+    xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+
+    # Prefer Wayland if available
+    if wayland_display and xdg_runtime_dir:
+        runtime_path = Path(xdg_runtime_dir)
+        if runtime_path.exists():
+            mounts.append(Mount(str(runtime_path), str(runtime_path), read_only=True))
+            return
+
+    # Fall back to X11
+    x_display = os.environ.get("DISPLAY")
+    if x_display:
+        x11_socket = Path("/tmp/.X11-unix")
+        if x11_socket.exists():
+            mounts.append(Mount(str(x11_socket), str(x11_socket), read_only=True))
+            return
+
+    console.print(
+        "[yellow]Warning: No display server detected, clipboard won't work inside sandbox[/]"
     )
 
 
@@ -190,10 +219,27 @@ def _build_environment(
         env["GIT_CONFIG_KEY_0"] = "gpg.ssh.program"
         env["GIT_CONFIG_VALUE_0"] = "ssh-keygen"
 
+    # Clipboard support (forward display env vars)
+    if config.clipboard:
+        _add_clipboard_environment(env)
+
     # User-defined env
     env.update(config.env)
 
     return env
+
+
+def _add_clipboard_environment(env: dict[str, str]) -> None:
+    """Forward display-related environment variables for clipboard tools."""
+    # Wayland
+    if wayland_display := os.environ.get("WAYLAND_DISPLAY"):
+        env["WAYLAND_DISPLAY"] = wayland_display
+    if xdg_runtime_dir := os.environ.get("XDG_RUNTIME_DIR"):
+        env["XDG_RUNTIME_DIR"] = xdg_runtime_dir
+
+    # X11
+    if x_display := os.environ.get("DISPLAY"):
+        env["DISPLAY"] = x_display
 
 
 def _parse_mount_spec(spec: str, project_dir: Path) -> Mount:

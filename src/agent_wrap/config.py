@@ -38,6 +38,7 @@ class Config:
     git_config: bool = False
     ai_config: bool = False  # Mount all AI tool configs (.claude, .codex, .gemini, .opencode)
     container_socket: bool = False  # Docker/Podman socket passthrough
+    clipboard: bool = False  # Enable clipboard access for image pasting
 
     # Isolation
     no_network: bool = False

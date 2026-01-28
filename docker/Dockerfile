@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Common utilities
     jq ripgrep fd-find fzf tree less vim nano htop \
     openssh-client gnupg unzip zip xz-utils \
+    # Clipboard tools for image pasting
+    wl-clipboard xclip \
     # For container socket access
     docker.io podman \
     && rm -rf /var/lib/apt/lists/*
@@ -77,7 +79,8 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN npm install -g \
     @openai/codex \
     @google/gemini-cli \
-    opencode-ai
+    opencode-ai \
+    @fission-ai/openspec
 
 # ============================================================
 # Entrypoint

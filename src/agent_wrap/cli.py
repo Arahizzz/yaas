@@ -29,6 +29,9 @@ def run(
     container_socket: bool = typer.Option(
         False, "--container-socket", help="Mount docker/podman socket"
     ),
+    clipboard: bool = typer.Option(
+        False, "--clipboard", help="Enable clipboard access for image pasting"
+    ),
     no_network: bool = typer.Option(False, "--no-network", help="Disable network"),
     image: str | None = typer.Option(None, "--image", help="Container image"),
     memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
@@ -47,6 +50,8 @@ def run(
         config.ai_config = True
     if container_socket:
         config.container_socket = True
+    if clipboard:
+        config.clipboard = True
     if no_network:
         config.no_network = True
     if image:
@@ -67,6 +72,9 @@ def shell(
     container_socket: bool = typer.Option(
         False, "--container-socket", help="Mount docker/podman socket"
     ),
+    clipboard: bool = typer.Option(
+        False, "--clipboard", help="Enable clipboard access for image pasting"
+    ),
     no_network: bool = typer.Option(False, "--no-network", help="Disable network"),
     image: str | None = typer.Option(None, "--image", help="Container image"),
     memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
@@ -84,6 +92,8 @@ def shell(
         config.ai_config = True
     if container_socket:
         config.container_socket = True
+    if clipboard:
+        config.clipboard = True
     if no_network:
         config.no_network = True
     if image:
@@ -111,6 +121,9 @@ def _create_tool_command(tool: str) -> None:
         container_socket: bool = typer.Option(
             False, "--container-socket", help="Mount docker/podman socket"
         ),
+        clipboard: bool = typer.Option(
+            False, "--clipboard", help="Enable clipboard access for image pasting"
+        ),
         no_network: bool = typer.Option(False, "--no-network", help="Disable network"),
         no_yolo: bool = typer.Option(False, "--no-yolo", help="Disable auto-confirm mode"),
         image: str | None = typer.Option(None, "--image", help="Container image"),
@@ -131,6 +144,8 @@ def _create_tool_command(tool: str) -> None:
             config.ai_config = True
         if container_socket:
             config.container_socket = True
+        if clipboard:
+            config.clipboard = True
         if no_network:
             config.no_network = True
         if image:
@@ -171,6 +186,7 @@ def config_cmd() -> None:
     console.print(f"[bold]git_config:[/] {cfg.git_config}")
     console.print(f"[bold]ai_config:[/] {cfg.ai_config}")
     console.print(f"[bold]container_socket:[/] {cfg.container_socket}")
+    console.print(f"[bold]clipboard:[/] {cfg.clipboard}")
     console.print(f"[bold]no_network:[/] {cfg.no_network}")
     console.print(f"[bold]readonly_project:[/] {cfg.readonly_project}")
     console.print("\n[bold]Resource limits:[/]")

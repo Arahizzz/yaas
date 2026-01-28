@@ -109,3 +109,117 @@ def test_parse_mount_spec_home_expansion() -> None:
 
     assert mount.source.startswith(str(Path.home()))
     assert mount.target == "/data"
+
+
+def test_clipboard_wayland_support() -> None:
+    """Test clipboard support with Wayland display."""
+    config = Config()
+    config.clipboard = True
+
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        runtime_dir = Path(tmpdir) / "runtime"
+        runtime_dir.mkdir()
+
+        with patch.dict(
+            os.environ,
+            {
+                "USER": "testuser",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "XDG_RUNTIME_DIR": str(runtime_dir),
+            },
+            clear=True,
+        ):
+            spec = build_container_spec(config, project_dir, ["bash"])
+
+    # Check environment variables are forwarded
+    assert spec.environment.get("WAYLAND_DISPLAY") == "wayland-0"
+    assert spec.environment.get("XDG_RUNTIME_DIR") == str(runtime_dir)
+
+    # Check runtime dir is mounted
+    mount_targets = [m.target for m in spec.mounts]
+    assert str(runtime_dir) in mount_targets
+
+
+def test_clipboard_x11_support() -> None:
+    """Test clipboard support with X11 display (fallback)."""
+    config = Config()
+    config.clipboard = True
+
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        x11_socket = Path(tmpdir) / ".X11-unix"
+        x11_socket.mkdir()
+
+        with patch.dict(
+            os.environ,
+            {
+                "USER": "testuser",
+                "DISPLAY": ":0",
+            },
+            clear=True,
+        ):
+            # Mock the X11 socket path
+            with patch("agent_wrap.container.Path") as mock_path:
+                # Set up mock to return the temp X11 socket for the specific check
+                real_path = Path
+
+                def path_side_effect(arg):
+                    if arg == "/tmp/.X11-unix":
+                        return x11_socket
+                    return real_path(arg)
+
+                mock_path.side_effect = path_side_effect
+                mock_path.home = real_path.home
+
+                spec = build_container_spec(config, project_dir, ["bash"])
+
+    # Check DISPLAY environment variable is forwarded
+    assert spec.environment.get("DISPLAY") == ":0"
+
+
+def test_clipboard_no_display_available(capsys) -> None:
+    """Test clipboard warning when no display server is detected."""
+    config = Config()
+    config.clipboard = True
+
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+
+        # No display env vars set
+        with patch.dict(os.environ, {"USER": "testuser"}, clear=True):
+            spec = build_container_spec(config, project_dir, ["bash"])
+
+    # No display env vars should be set
+    assert "WAYLAND_DISPLAY" not in spec.environment
+    assert "DISPLAY" not in spec.environment
+
+
+def test_clipboard_disabled_no_display_mounts() -> None:
+    """Test that display mounts are not added when clipboard is disabled."""
+    config = Config()
+    config.clipboard = False
+
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        runtime_dir = Path(tmpdir) / "runtime"
+        runtime_dir.mkdir()
+
+        with patch.dict(
+            os.environ,
+            {
+                "USER": "testuser",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "XDG_RUNTIME_DIR": str(runtime_dir),
+                "DISPLAY": ":0",
+            },
+        ):
+            spec = build_container_spec(config, project_dir, ["bash"])
+
+    # Display env vars should NOT be forwarded when clipboard is disabled
+    assert "WAYLAND_DISPLAY" not in spec.environment
+    assert "DISPLAY" not in spec.environment
+
+    # Runtime dir should NOT be mounted
+    mount_targets = [m.target for m in spec.mounts]
+    assert str(runtime_dir) not in mount_targets
