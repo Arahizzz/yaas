@@ -19,6 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wl-clipboard xclip \
     && rm -rf /var/lib/apt/lists/*
 
+# Allow passwordless sudo for all users
+RUN echo "ALL ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd \
+    && chmod 440 /etc/sudoers.d/nopasswd
+
 # ============================================================
 # Install mise (tool version manager)
 # ============================================================
