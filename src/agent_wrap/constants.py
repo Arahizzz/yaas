@@ -17,9 +17,9 @@ def _xdg_cache_home() -> Path:
 # Default container image
 DEFAULT_IMAGE = "ghcr.io/arahizzz/agent-wrap-runtime:latest"
 
-# Image update interval (1 week in seconds)
-IMAGE_PULL_INTERVAL = 7 * 24 * 60 * 60
+# Timestamp files for auto-update tracking
 LAST_PULL_FILE = _xdg_cache_home() / "agent-wrap" / ".last-pull"
+LAST_UPGRADE_FILE = _xdg_cache_home() / "agent-wrap" / ".last-upgrade"
 
 # Container volumes for persistence
 MISE_DATA_VOLUME = "agent-wrap-data"  # ~/.local/share/mise (tools)

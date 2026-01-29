@@ -50,6 +50,12 @@ class Config:
     mounts: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
 
+    # Auto-update settings
+    auto_pull_image: bool = True  # Enable/disable weekly image pull
+    auto_upgrade_tools: bool = True  # Enable/disable daily tool upgrade
+    image_pull_interval: int = 7 * 24 * 60 * 60  # 1 week in seconds
+    tool_upgrade_interval: int = 24 * 60 * 60  # 1 day in seconds
+
 
 def load_config(project_dir: Path) -> Config:
     """Load and merge global config → project config."""
