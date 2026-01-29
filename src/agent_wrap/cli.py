@@ -8,7 +8,7 @@ import typer
 from rich.console import Console
 
 from .config import Config, load_config
-from .constants import TOOL_SHORTCUTS, TOOL_YOLO_FLAGS
+from .constants import CACHE_VOLUME, MISE_DATA_VOLUME, TOOL_SHORTCUTS, TOOL_YOLO_FLAGS
 from .container import build_container_spec
 from .runtime import get_runtime
 
@@ -201,6 +201,39 @@ def config_cmd() -> None:
 
 # Add alias for config command
 app.command(name="config")(config_cmd)
+
+
+@app.command(name="reset-volumes")
+def reset_volumes(
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Reset agent-wrap volumes (removes installed tools and cache)."""
+    import subprocess
+
+    volumes = [MISE_DATA_VOLUME, CACHE_VOLUME]
+
+    if not force:
+        console.print("[yellow]This will delete all installed tools and cache.[/]")
+        console.print(f"Volumes: {', '.join(volumes)}")
+        confirm = typer.confirm("Continue?")
+        if not confirm:
+            raise typer.Abort()
+
+    runtime = get_runtime()
+    for volume in volumes:
+        result = subprocess.run(
+            [runtime.name, "volume", "rm", "-f", volume],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            console.print(f"[green]Removed volume: {volume}[/]")
+        elif "no such volume" in result.stderr.lower():
+            console.print(f"[dim]Volume not found: {volume}[/]")
+        else:
+            console.print(f"[red]Failed to remove {volume}: {result.stderr}[/]")
+
+    console.print("[green]Reset complete. Tools will be reinstalled on next run.[/]")
 
 
 def _run_container(config: Config, project_dir: Path, command: list[str]) -> None:
