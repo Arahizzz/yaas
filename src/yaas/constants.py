@@ -1,35 +1,29 @@
 """Centralized constants for YAAS."""
 
-import os
 from pathlib import Path
 
+import platformdirs
 
-def _xdg_config_home() -> Path:
-    """Get XDG_CONFIG_HOME or fallback to ~/.config."""
-    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-
-
-def _xdg_cache_home() -> Path:
-    """Get XDG_CACHE_HOME or fallback to ~/.cache."""
-    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-
+# Cross-platform config and cache directories
+CONFIG_DIR = Path(platformdirs.user_config_dir("yaas"))
+CACHE_DIR = Path(platformdirs.user_cache_dir("yaas"))
 
 # Runtime container image
 RUNTIME_IMAGE = "ghcr.io/arahizzz/yaas/runtime:0.x-latest"
 
 # Timestamp files for auto-update tracking
-LAST_PULL_FILE = _xdg_cache_home() / "yaas" / ".last-pull"
-LAST_UPGRADE_FILE = _xdg_cache_home() / "yaas" / ".last-upgrade"
+LAST_PULL_FILE = CACHE_DIR / ".last-pull"
+LAST_UPGRADE_FILE = CACHE_DIR / ".last-upgrade"
 
 # Container volumes for persistence
 MISE_DATA_VOLUME = "yaas-data"  # ~/.local/share/mise (tools)
 CACHE_VOLUME = "yaas-cache"  # ~/.cache (general cache)
 
 # Mise config path (auto-created if missing)
-MISE_CONFIG_PATH = _xdg_config_home() / "yaas" / "mise.toml"
+MISE_CONFIG_PATH = CONFIG_DIR / "mise.toml"
 
 # Config file locations
-GLOBAL_CONFIG_PATH = _xdg_config_home() / "yaas" / "config.toml"
+GLOBAL_CONFIG_PATH = CONFIG_DIR / "config.toml"
 PROJECT_CONFIG_NAME = ".yaas.toml"
 
 # API keys to auto-forward
