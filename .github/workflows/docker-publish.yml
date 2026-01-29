@@ -5,35 +5,30 @@ on:
     # Weekly: Sunday at 3:00 AM UTC
     - cron: '0 3 * * 0'
   workflow_dispatch:
-    inputs:
-      platforms:
-        description: 'Target platforms (comma-separated)'
-        required: false
-        default: 'linux/amd64,linux/arm64'
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/yaas/runtime
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            suffix: arm64
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Generate date tag
-        id: date
-        run: echo "tag=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -45,33 +40,79 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=0.x-latest
-            type=raw,value=0.x-${{ steps.date.outputs.tag }}
-
-      - name: Build and push Docker image
-        id: push
+      - name: Build and push arch-specific image
         uses: docker/build-push-action@v6
         with:
           context: ./docker
           file: ./docker/Dockerfile
-          platforms: ${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64' }}
+          platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: true
-          sbom: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-${{ github.run_id }}-${{ matrix.suffix }}
+          cache-from: type=gha,scope=${{ matrix.suffix }}
+          cache-to: type=gha,scope=${{ matrix.suffix }},mode=max
+          provenance: false
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Generate date tag
+        id: date
+        run: echo "tag=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest
+        run: |
+          # Create manifest for 0.x-latest
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:0.x-latest \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-${{ github.run_id }}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-${{ github.run_id }}-arm64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:0.x-latest
+
+          # Create manifest for date tag
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:0.x-${{ steps.date.outputs.tag }} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-${{ github.run_id }}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:build-${{ github.run_id }}-arm64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:0.x-${{ steps.date.outputs.tag }}
+
+      - name: Get manifest digest
+        id: digest
+        run: |
+          DIGEST=$(docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:0.x-latest -v | jq -r '.[0].Descriptor.digest')
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
+
+      - name: Delete temporary build images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get package versions and delete the temporary build tags
+          for SUFFIX in amd64 arm64; do
+            TAG="build-${{ github.run_id }}-$SUFFIX"
+            VERSION_ID=$(gh api \
+              "/users/${{ github.repository_owner }}/packages/container/yaas%2Fruntime/versions" \
+              --jq ".[] | select(.metadata.container.tags[] == \"$TAG\") | .id")
+            if [ -n "$VERSION_ID" ]; then
+              gh api --method DELETE \
+                "/users/${{ github.repository_owner }}/packages/container/yaas%2Fruntime/versions/$VERSION_ID" \
+                || echo "Warning: Failed to delete $TAG"
+            fi
+          done
