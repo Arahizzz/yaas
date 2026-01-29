@@ -23,7 +23,7 @@ from .container import build_container_spec
 from .runtime import get_runtime
 
 app = typer.Typer(
-    name="agent-wrap",
+    name="yaas",
     help="Run AI coding agents in sandboxed containers",
     no_args_is_help=True,
 )
@@ -225,7 +225,7 @@ app.command(name="config")(config_cmd)
 def reset_volumes(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
-    """Reset agent-wrap volumes (removes installed tools and cache)."""
+    """Reset yaas volumes (removes installed tools and cache)."""
     volumes = [MISE_DATA_VOLUME, CACHE_VOLUME]
 
     if not force:

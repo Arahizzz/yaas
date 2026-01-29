@@ -5,10 +5,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from agent_wrap.config import Config
-from agent_wrap.constants import DEFAULT_IMAGE
-from agent_wrap.container import build_container_spec, _parse_mount_spec
-from agent_wrap.runtime import Mount
+from yaas.config import Config
+from yaas.constants import DEFAULT_IMAGE
+from yaas.container import build_container_spec, _parse_mount_spec
+from yaas.runtime import Mount
 
 
 def test_build_container_spec_basic() -> None:
@@ -45,7 +45,7 @@ def test_build_container_spec_environment() -> None:
 
     assert spec.environment["TERM"] == "xterm-256color"
     assert spec.environment["ANTHROPIC_API_KEY"] == "test-key-123"
-    assert spec.environment["AGENT_WRAP"] == "1"
+    assert spec.environment["YAAS"] == "1"
 
 
 def test_build_container_spec_network_isolation() -> None:
@@ -164,7 +164,7 @@ def test_clipboard_x11_support() -> None:
             clear=True,
         ):
             # Mock the X11 socket path
-            with patch("agent_wrap.container.Path") as mock_path:
+            with patch("yaas.container.Path") as mock_path:
                 # Set up mock to return the temp X11 socket for the specific check
                 real_path = Path
 

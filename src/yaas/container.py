@@ -201,7 +201,7 @@ def _add_mise_support(mounts: list[Mount]) -> None:
 
     # Auto-create default mise.toml if missing (copy from vendored file)
     if not MISE_CONFIG_PATH.exists():
-        with resources.files("agent_wrap.data").joinpath("mise.toml").open("rb") as src:
+        with resources.files("yaas.data").joinpath("mise.toml").open("rb") as src:
             with open(MISE_CONFIG_PATH, "wb") as dst:
                 shutil.copyfileobj(src, dst)
         console.print(f"[green]Created default mise config at {MISE_CONFIG_PATH}[/]")
@@ -233,7 +233,7 @@ def _build_environment(
     env: dict[str, str] = {
         "HOME": sandbox_home,
         "PROJECT_PATH": str(project_dir),
-        "AGENT_WRAP": "1",
+        "YAAS": "1",
         # Make npm use XDG-compliant cache path
         "npm_config_cache": f"{sandbox_home}/.cache/npm",
         # Mise configuration

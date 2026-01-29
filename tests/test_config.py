@@ -3,7 +3,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from agent_wrap.config import Config, ResourceLimits, load_config
+from yaas.config import Config, ResourceLimits, load_config
 
 
 def test_default_config() -> None:
@@ -33,7 +33,7 @@ def test_project_config_overrides() -> None:
     """Test that project config overrides defaults."""
     with TemporaryDirectory() as tmpdir:
         project_dir = Path(tmpdir)
-        config_file = project_dir / ".agent-wrap.toml"
+        config_file = project_dir / ".yaas.toml"
         config_file.write_text("""
 ssh_agent = true
 no_network = true

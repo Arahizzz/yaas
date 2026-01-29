@@ -1,4 +1,4 @@
-# agent-wrap
+# YAAS - Yet Another Agent Sandbox
 
 Run AI coding agents in sandboxed containers with proper UID passthrough.
 
@@ -6,7 +6,7 @@ Run AI coding agents in sandboxed containers with proper UID passthrough.
 
 - **Host UID/GID passthrough** - Files created in containers have correct ownership
 - **Podman first, Docker fallback** - Better rootless security model
-- **AI CLI shortcuts** - `agent-wrap claude`, `agent-wrap codex`, etc. with YOLO mode
+- **AI CLI shortcuts** - `yaas claude`, `yaas codex`, etc. with YOLO mode
 - **Config persistence** - Direct mounts for `.claude`, `.gitconfig`, etc.
 - **SSH agent forwarding** - Use host SSH keys inside container
 - **Resource limits** - Memory, CPU, and PID limits to prevent runaway processes
@@ -15,37 +15,37 @@ Run AI coding agents in sandboxed containers with proper UID passthrough.
 ## Installation
 
 ```bash
-pip install agent-wrap
+pip install yaas
 
 # Or with pipx for isolated install
-pipx install agent-wrap
+pipx install yaas
 ```
 
 ## Usage
 
 ```bash
 # Run Claude in sandbox with YOLO mode (auto-confirm)
-agent-wrap claude
+yaas claude
 
 # Run Claude with extra args
-agent-wrap claude -p "Fix the bug in main.py"
+yaas claude -p "Fix the bug in main.py"
 
 # Run any command
-agent-wrap run -- make build
+yaas run -- make build
 
 # Start interactive shell
-agent-wrap shell
+yaas shell
 
 # With options
-agent-wrap --ssh-agent --git-config claude
+yaas --ssh-agent --git-config claude
 ```
 
 ## Configuration
 
-Create `~/.config/agent-wrap/config.toml` for global settings:
+Create `~/.config/yaas/config.toml` for global settings:
 
 ```toml
-image = "ghcr.io/arahizzz/agent-wrap:latest"
+image = "ghcr.io/arahizzz/yaas-runtime:latest"
 ssh_agent = true
 git_config = true
 claude_config = true
@@ -55,7 +55,7 @@ memory = "8g"
 cpus = 4.0
 ```
 
-Create `.agent-wrap.toml` in your project for project-specific overrides:
+Create `.yaas.toml` in your project for project-specific overrides:
 
 ```toml
 no_network = true

@@ -1,4 +1,4 @@
-"""Centralized constants for agent-wrap."""
+"""Centralized constants for YAAS."""
 
 import os
 from pathlib import Path
@@ -15,22 +15,22 @@ def _xdg_cache_home() -> Path:
 
 
 # Default container image
-DEFAULT_IMAGE = "ghcr.io/arahizzz/agent-wrap-runtime:latest"
+DEFAULT_IMAGE = "ghcr.io/arahizzz/yaas-runtime:latest"
 
 # Timestamp files for auto-update tracking
-LAST_PULL_FILE = _xdg_cache_home() / "agent-wrap" / ".last-pull"
-LAST_UPGRADE_FILE = _xdg_cache_home() / "agent-wrap" / ".last-upgrade"
+LAST_PULL_FILE = _xdg_cache_home() / "yaas" / ".last-pull"
+LAST_UPGRADE_FILE = _xdg_cache_home() / "yaas" / ".last-upgrade"
 
 # Container volumes for persistence
-MISE_DATA_VOLUME = "agent-wrap-data"  # ~/.local/share/mise (tools)
-CACHE_VOLUME = "agent-wrap-cache"  # ~/.cache (general cache)
+MISE_DATA_VOLUME = "yaas-data"  # ~/.local/share/mise (tools)
+CACHE_VOLUME = "yaas-cache"  # ~/.cache (general cache)
 
 # Mise config path (auto-created if missing)
-MISE_CONFIG_PATH = _xdg_config_home() / "agent-wrap" / "mise.toml"
+MISE_CONFIG_PATH = _xdg_config_home() / "yaas" / "mise.toml"
 
 # Config file locations
-GLOBAL_CONFIG_PATH = _xdg_config_home() / "agent-wrap" / "config.toml"
-PROJECT_CONFIG_NAME = ".agent-wrap.toml"
+GLOBAL_CONFIG_PATH = _xdg_config_home() / "yaas" / "config.toml"
+PROJECT_CONFIG_NAME = ".yaas.toml"
 
 # API keys to auto-forward
 API_KEYS = [
@@ -54,7 +54,7 @@ CONFIG_MOUNTS = {
     ".config/git": "Git XDG config (dir)",
 }
 
-# Tool shortcuts (agent-wrap claude → runs claude)
+# Tool shortcuts (yaas claude → runs claude)
 TOOL_SHORTCUTS = ["claude", "codex", "gemini", "opencode"]
 
 # YOLO flags for each tool (auto-approve all tool calls)

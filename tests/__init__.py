@@ -1,1 +1,1 @@
-"""Tests for agent-wrap."""
+"""Tests for YAAS."""

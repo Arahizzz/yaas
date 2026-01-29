@@ -1,6 +1,6 @@
 """Tests for container runtime."""
 
-from agent_wrap.runtime import ContainerSpec, Mount, PodmanRuntime, DockerRuntime
+from yaas.runtime import ContainerSpec, Mount, PodmanRuntime, DockerRuntime
 
 
 def test_mount_dataclass() -> None:

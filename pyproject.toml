@@ -1,5 +1,5 @@
 [project]
-name = "agent-wrap"
+name = "yaas"
 version = "0.1.0"
 description = "Run AI coding agents in sandboxed containers with proper UID passthrough"
 readme = "README.md"
@@ -34,14 +34,14 @@ dev = [
 ]
 
 [project.scripts]
-agent-wrap = "agent_wrap.cli:app"
+yaas = "yaas.cli:app"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_wrap"]
+packages = ["src/yaas"]
 
 [tool.ruff]
 target-version = "py310"
