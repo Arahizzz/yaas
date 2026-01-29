@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/yaas/runtime
+  IMAGE_NAME: arahizzz/yaas/runtime
 
 jobs:
   build:
@@ -108,11 +108,11 @@ jobs:
           for SUFFIX in amd64 arm64; do
             TAG="build-${{ github.run_id }}-$SUFFIX"
             VERSION_ID=$(gh api \
-              "/users/${{ github.repository_owner }}/packages/container/yaas%2Fruntime/versions" \
+              "/users/arahizzz/packages/container/yaas%2Fruntime/versions" \
               --jq ".[] | select(.metadata.container.tags[] == \"$TAG\") | .id")
             if [ -n "$VERSION_ID" ]; then
               gh api --method DELETE \
-                "/users/${{ github.repository_owner }}/packages/container/yaas%2Fruntime/versions/$VERSION_ID" \
+                "/users/arahizzz/packages/container/yaas%2Fruntime/versions/$VERSION_ID" \
                 || echo "Warning: Failed to delete $TAG"
             fi
           done
