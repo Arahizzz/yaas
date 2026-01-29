@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from yaas.config import Config
-from yaas.constants import DEFAULT_IMAGE
+from yaas.constants import RUNTIME_IMAGE
 from yaas.container import build_container_spec, _parse_mount_spec
 from yaas.runtime import Mount
 
@@ -20,7 +20,7 @@ def test_build_container_spec_basic() -> None:
         with patch.dict(os.environ, {"USER": "testuser", "TERM": "xterm-256color"}):
             spec = build_container_spec(config, project_dir, ["bash"])
 
-    assert spec.image == DEFAULT_IMAGE
+    assert spec.image == RUNTIME_IMAGE
     assert spec.command == ["bash"]
     assert spec.working_dir == str(project_dir)
     assert spec.tty is True

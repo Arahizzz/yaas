@@ -14,9 +14,9 @@ from .constants import (
     API_KEYS,
     CACHE_VOLUME,
     CONTAINER_SOCKETS,
-    DEFAULT_IMAGE,
     MISE_CONFIG_PATH,
     MISE_DATA_VOLUME,
+    RUNTIME_IMAGE,
 )
 from .runtime import ContainerSpec, Mount
 
@@ -45,7 +45,7 @@ def build_container_spec(
     container_user = f"{uid}:{gid}"
 
     return ContainerSpec(
-        image=DEFAULT_IMAGE,
+        image=RUNTIME_IMAGE,
         command=command,
         working_dir=str(project_dir),
         user=container_user,

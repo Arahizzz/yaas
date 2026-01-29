@@ -14,8 +14,8 @@ def _xdg_cache_home() -> Path:
     return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
 
 
-# Default container image
-DEFAULT_IMAGE = "ghcr.io/arahizzz/yaas-runtime:latest"
+# Runtime container image
+RUNTIME_IMAGE = "ghcr.io/arahizzz/yaas/runtime:0.x-latest"
 
 # Timestamp files for auto-update tracking
 LAST_PULL_FILE = _xdg_cache_home() / "yaas" / ".last-pull"

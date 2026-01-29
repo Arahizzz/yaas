@@ -12,10 +12,10 @@ from rich.console import Console
 from .config import Config, load_config
 from .constants import (
     CACHE_VOLUME,
-    DEFAULT_IMAGE,
     LAST_PULL_FILE,
     LAST_UPGRADE_FILE,
     MISE_DATA_VOLUME,
+    RUNTIME_IMAGE,
     TOOL_SHORTCUTS,
     TOOL_YOLO_FLAGS,
 )
@@ -278,8 +278,8 @@ def upgrade_tools() -> None:
 
 def _pull_image(runtime) -> bool:
     """Pull container image and update timestamp. Returns True on success."""
-    console.print(f"[dim]Pulling {DEFAULT_IMAGE}...[/]")
-    result = subprocess.run([runtime.name, "pull", DEFAULT_IMAGE])
+    console.print(f"[dim]Pulling {RUNTIME_IMAGE}...[/]")
+    result = subprocess.run([runtime.name, "pull", RUNTIME_IMAGE])
     if result.returncode == 0:
         LAST_PULL_FILE.parent.mkdir(parents=True, exist_ok=True)
         LAST_PULL_FILE.write_text(str(time.time()))
