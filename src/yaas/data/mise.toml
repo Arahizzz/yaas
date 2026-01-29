@@ -18,6 +18,10 @@ delta = "latest"
 # AI CLIs (via aqua backend)
 "aqua:anthropics/claude-code" = "latest"
 
+# Container CLIs (for docker-in-docker via socket forwarding)
+docker-cli = "latest"
+podman = "latest"
+
 [env]
 # User can add custom env vars here
 # Example:

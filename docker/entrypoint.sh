@@ -24,7 +24,7 @@ fi
 SHIMS_DIR="$MISE_DATA_DIR/shims"
 if [[ ! -d "$SHIMS_DIR" ]] || [[ -z "$(ls -A "$SHIMS_DIR" 2>/dev/null)" ]]; then
     echo "First run detected - installing mise tools..."
-    mise install --yes 2>&1 || echo "Warning: Some tools failed to install"
+    mise install --yes || echo "Warning: Some tools failed to install"
 fi
 
 # Activate mise - this adds shims to PATH and loads env vars from [env] section

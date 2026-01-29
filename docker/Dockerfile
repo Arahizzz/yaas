@@ -17,8 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo less vim nano \
     # Clipboard tools for image pasting
     wl-clipboard xclip \
-    # Container-in-container support
-    docker.io podman \
     && rm -rf /var/lib/apt/lists/*
 
 # ============================================================
