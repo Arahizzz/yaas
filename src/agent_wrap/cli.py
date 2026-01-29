@@ -20,9 +20,15 @@ app = typer.Typer(
 console = Console()
 
 
-@app.command()
+@app.command(
+    context_settings={
+        "allow_extra_args": True,
+        "allow_interspersed_args": False,
+        "ignore_unknown_options": True,
+    },
+)
 def run(
-    command: list[str] = typer.Argument(..., help="Command to run"),
+    ctx: typer.Context,
     ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
     git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
     ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
@@ -38,6 +44,9 @@ def run(
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
 ) -> None:
     """Run a command in the sandbox."""
+    if not ctx.args:
+        raise typer.BadParameter("Missing command to run")
+
     project_dir = Path.cwd()
     config = load_config(project_dir)
 
@@ -61,7 +70,7 @@ def run(
     if cpus:
         config.resources.cpus = cpus
 
-    _run_container(config, project_dir, list(command))
+    _run_container(config, project_dir, ctx.args)
 
 
 @app.command()
@@ -111,7 +120,11 @@ def _create_tool_command(tool: str) -> None:
 
     @app.command(
         name=tool,
-        context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
+        context_settings={
+            "allow_extra_args": True,
+            "allow_interspersed_args": False,
+            "ignore_unknown_options": True,
+        },
     )
     def tool_command(
         ctx: typer.Context,
