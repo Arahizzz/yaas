@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-import time
 from pathlib import Path
 
 import typer
@@ -12,8 +11,6 @@ from rich.console import Console
 from .config import Config, load_config
 from .constants import (
     CACHE_VOLUME,
-    LAST_PULL_FILE,
-    LAST_UPGRADE_FILE,
     MISE_DATA_VOLUME,
     RUNTIME_IMAGE,
     TOOL_SHORTCUTS,
@@ -205,8 +202,6 @@ def config_cmd() -> None:
     console.print("\n[bold]Auto-update:[/]")
     console.print(f"  auto_pull_image: {cfg.auto_pull_image}")
     console.print(f"  auto_upgrade_tools: {cfg.auto_upgrade_tools}")
-    console.print(f"  image_pull_interval: {cfg.image_pull_interval}s")
-    console.print(f"  tool_upgrade_interval: {cfg.tool_upgrade_interval}s")
     console.print("\n[bold]Resource limits:[/]")
     console.print(f"  memory: {cfg.resources.memory}")
     console.print(f"  cpus: {cfg.resources.cpus or 'unlimited'}")
@@ -277,65 +272,29 @@ def upgrade_tools() -> None:
 
 
 def _pull_image(runtime) -> bool:
-    """Pull container image and update timestamp. Returns True on success."""
+    """Pull container image. Returns True on success."""
     console.print(f"[dim]Pulling {RUNTIME_IMAGE}...[/]")
     result = subprocess.run([runtime.name, "pull", RUNTIME_IMAGE])
-    if result.returncode == 0:
-        LAST_PULL_FILE.parent.mkdir(parents=True, exist_ok=True)
-        LAST_PULL_FILE.write_text(str(time.time()))
-        return True
-    return False
+    return result.returncode == 0
 
 
-def _ensure_fresh_image(config: Config, runtime) -> None:
-    """Pull image if older than config.image_pull_interval."""
-    if not config.auto_pull_image:
-        return
-
-    if LAST_PULL_FILE.exists():
-        try:
-            last_pull = float(LAST_PULL_FILE.read_text().strip())
-            if time.time() - last_pull < config.image_pull_interval:
-                return  # Still fresh
-        except (ValueError, OSError):
-            pass  # Corrupted file, proceed with pull
-
-    _pull_image(runtime)
+def _pull_image_if_enabled(config: Config, runtime) -> None:
+    """Pull image if auto_pull_image is enabled."""
+    if config.auto_pull_image:
+        _pull_image(runtime)
 
 
 def _upgrade_tools(config: Config, project_dir: Path, runtime) -> bool:
     """Run mise upgrade in container. Returns True on success."""
     console.print("[dim]Upgrading mise tools...[/]")
     spec = build_container_spec(config, project_dir, ["mise", "upgrade", "--yes"], interactive=False)
-    exit_code = runtime.run(spec)
-    if exit_code == 0:
-        LAST_UPGRADE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        LAST_UPGRADE_FILE.write_text(str(time.time()))
-        return True
-    return False
-
-
-def _ensure_fresh_tools(config: Config, project_dir: Path, runtime) -> None:
-    """Upgrade tools if older than config.tool_upgrade_interval."""
-    if not config.auto_upgrade_tools:
-        return
-
-    if LAST_UPGRADE_FILE.exists():
-        try:
-            last_upgrade = float(LAST_UPGRADE_FILE.read_text().strip())
-            if time.time() - last_upgrade < config.tool_upgrade_interval:
-                return  # Still fresh
-        except (ValueError, OSError):
-            pass  # Corrupted file, proceed with upgrade
-
-    _upgrade_tools(config, project_dir, runtime)
+    return runtime.run(spec) == 0
 
 
 def _run_container(config: Config, project_dir: Path, command: list[str]) -> None:
     """Build spec and run container."""
     runtime = get_runtime(config.runtime)
-    _ensure_fresh_image(config, runtime)
-    _ensure_fresh_tools(config, project_dir, runtime)
+    _pull_image_if_enabled(config, runtime)
     spec = build_container_spec(config, project_dir, command)
 
     console.print("[dim]Launching sandbox container...[/]")

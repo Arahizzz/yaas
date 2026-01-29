@@ -11,10 +11,6 @@ CACHE_DIR = Path(platformdirs.user_cache_dir("yaas"))
 # Runtime container image
 RUNTIME_IMAGE = "ghcr.io/arahizzz/yaas/runtime:0.x-latest"
 
-# Timestamp files for auto-update tracking
-LAST_PULL_FILE = CACHE_DIR / ".last-pull"
-LAST_UPGRADE_FILE = CACHE_DIR / ".last-upgrade"
-
 # Container volumes for persistence
 MISE_DATA_VOLUME = "yaas-data"  # ~/.local/share/mise (tools)
 CACHE_VOLUME = "yaas-cache"  # ~/.cache (general cache)

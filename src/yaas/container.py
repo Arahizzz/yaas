@@ -234,6 +234,8 @@ def _build_environment(
         "HOME": sandbox_home,
         "PROJECT_PATH": str(project_dir),
         "YAAS": "1",
+        # Auto-upgrade tools on container start (controlled by entrypoint.sh)
+        "YAAS_AUTO_UPGRADE_TOOLS": "true" if config.auto_upgrade_tools else "false",
         # Make npm use XDG-compliant cache path
         "npm_config_cache": f"{sandbox_home}/.cache/npm",
         # Mise configuration

@@ -20,11 +20,9 @@ fi
 # Mise setup (MISE_YES=1 auto-confirms trust prompts)
 # ============================================================
 
-# Auto-install tools on first run (if shims directory is empty)
-SHIMS_DIR="$MISE_DATA_DIR/shims"
-if [[ ! -d "$SHIMS_DIR" ]] || [[ -z "$(ls -A "$SHIMS_DIR" 2>/dev/null)" ]]; then
-    echo "First run detected - installing mise tools..."
-    mise install --yes || echo "Warning: Some tools failed to install"
+# Run mise upgrade if enabled (controlled by YAAS_AUTO_UPGRADE_TOOLS env var)
+if [[ "${YAAS_AUTO_UPGRADE_TOOLS:-true}" == "true" ]]; then
+    mise upgrade --yes || echo "Warning: Some tools failed to install/upgrade"
 fi
 
 # Activate mise - this adds shims to PATH and loads env vars from [env] section
