@@ -3,7 +3,14 @@
 from pathlib import Path
 
 # Default container image
-DEFAULT_IMAGE = "ghcr.io/arahizzz/agent-wrap:latest"
+DEFAULT_IMAGE = "ghcr.io/arahizzz/agent-wrap-runtime:latest"
+
+# Container volumes for persistence
+MISE_DATA_VOLUME = "agent-wrap-data"  # ~/.local/share/mise (tools)
+CACHE_VOLUME = "agent-wrap-cache"  # ~/.cache (general cache)
+
+# Mise config path (auto-created if missing)
+MISE_CONFIG_PATH = Path.home() / ".config" / "agent-wrap" / "mise.toml"
 
 # Config file locations
 GLOBAL_CONFIG_PATH = Path.home() / ".config" / "agent-wrap" / "config.toml"

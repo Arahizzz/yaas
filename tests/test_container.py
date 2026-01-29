@@ -120,6 +120,9 @@ def test_clipboard_wayland_support() -> None:
         project_dir = Path(tmpdir)
         runtime_dir = Path(tmpdir) / "runtime"
         runtime_dir.mkdir()
+        # Create wayland socket file
+        wayland_socket = runtime_dir / "wayland-0"
+        wayland_socket.touch()
 
         with patch.dict(
             os.environ,
@@ -136,9 +139,9 @@ def test_clipboard_wayland_support() -> None:
     assert spec.environment.get("WAYLAND_DISPLAY") == "wayland-0"
     assert spec.environment.get("XDG_RUNTIME_DIR") == str(runtime_dir)
 
-    # Check runtime dir is mounted
+    # Check wayland socket is mounted (not whole runtime dir, to leave room for GPG)
     mount_targets = [m.target for m in spec.mounts]
-    assert str(runtime_dir) in mount_targets
+    assert str(wayland_socket) in mount_targets
 
 
 def test_clipboard_x11_support() -> None:

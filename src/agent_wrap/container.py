@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import os
+import shutil
+from importlib import resources
 from pathlib import Path
 
 from rich.console import Console
 
 from .config import Config
-from .constants import API_KEYS, CONTAINER_SOCKETS
+from .constants import (
+    API_KEYS,
+    CACHE_VOLUME,
+    CONTAINER_SOCKETS,
+    MISE_CONFIG_PATH,
+    MISE_DATA_VOLUME,
+)
 from .runtime import ContainerSpec, Mount
 
 console = Console()
@@ -109,6 +117,9 @@ def _build_mounts(
     if config.clipboard:
         _add_clipboard_support(mounts)
 
+    # Mise tool management support
+    _add_mise_support(mounts)
+
     # User-defined mounts
     for mount_spec in config.mounts:
         mounts.append(_parse_mount_spec(mount_spec, project_dir))
@@ -154,11 +165,12 @@ def _add_clipboard_support(mounts: list[Mount]) -> None:
     wayland_display = os.environ.get("WAYLAND_DISPLAY")
     xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
 
-    # Prefer Wayland if available
+    # Prefer Wayland if available - mount only the socket file (not whole dir)
+    # to leave /run/user/$UID writable for GPG sockets
     if wayland_display and xdg_runtime_dir:
-        runtime_path = Path(xdg_runtime_dir)
-        if runtime_path.exists():
-            mounts.append(Mount(str(runtime_path), str(runtime_path), read_only=True))
+        wayland_socket = Path(xdg_runtime_dir) / wayland_display
+        if wayland_socket.exists():
+            mounts.append(Mount(str(wayland_socket), str(wayland_socket), read_only=True))
             return
 
     # Fall back to X11
@@ -172,6 +184,29 @@ def _add_clipboard_support(mounts: list[Mount]) -> None:
     console.print(
         "[yellow]Warning: No display server detected, clipboard won't work inside sandbox[/]"
     )
+
+
+def _add_mise_support(mounts: list[Mount]) -> None:
+    """Add mise volumes and config mount for tool management."""
+    sandbox_home = "/home"
+
+    # Named volumes for persistence between runs
+    mounts.append(Mount(MISE_DATA_VOLUME, f"{sandbox_home}/.local/share/mise", type="volume"))
+    mounts.append(Mount(CACHE_VOLUME, f"{sandbox_home}/.cache", type="volume"))
+
+    # Ensure config directory exists
+    config_dir = MISE_CONFIG_PATH.parent
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    # Auto-create default mise.toml if missing (copy from vendored file)
+    if not MISE_CONFIG_PATH.exists():
+        with resources.files("agent_wrap.data").joinpath("mise.toml").open("rb") as src:
+            with open(MISE_CONFIG_PATH, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+        console.print(f"[green]Created default mise config at {MISE_CONFIG_PATH}[/]")
+
+    # Mount mise config
+    mounts.append(Mount(str(MISE_CONFIG_PATH), f"{sandbox_home}/.config/mise/config.toml"))
 
 
 def _add_config_mounts(
@@ -200,6 +235,13 @@ def _build_environment(
         "AGENT_WRAP": "1",
         # Make npm use XDG-compliant cache path
         "npm_config_cache": f"{sandbox_home}/.cache/npm",
+        # Mise configuration
+        "MISE_DATA_DIR": f"{sandbox_home}/.local/share/mise",
+        "MISE_CACHE_DIR": f"{sandbox_home}/.cache/mise",
+        # Trust project mise configs automatically
+        "MISE_TRUSTED_CONFIG_PATHS": str(project_dir),
+        # Auto-confirm trust prompts
+        "MISE_YES": "1",
     }
 
     # Forward TERM

@@ -10,7 +10,7 @@ def test_default_config() -> None:
     """Test that Config dataclass defaults are set correctly."""
     config = Config()
 
-    assert config.image == "ghcr.io/arahizzz/agent-wrap:latest"
+    assert config.image == "ghcr.io/arahizzz/agent-wrap-runtime:latest"
     assert config.runtime is None
     assert config.ssh_agent is False
     assert config.git_config is False
