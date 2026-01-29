@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from agent_wrap.config import Config
+from agent_wrap.constants import DEFAULT_IMAGE
 from agent_wrap.container import build_container_spec, _parse_mount_spec
 from agent_wrap.runtime import Mount
 
@@ -19,7 +20,7 @@ def test_build_container_spec_basic() -> None:
         with patch.dict(os.environ, {"USER": "testuser", "TERM": "xterm-256color"}):
             spec = build_container_spec(config, project_dir, ["bash"])
 
-    assert spec.image == config.image
+    assert spec.image == DEFAULT_IMAGE
     assert spec.command == ["bash"]
     assert spec.working_dir == str(project_dir)
     assert spec.tty is True

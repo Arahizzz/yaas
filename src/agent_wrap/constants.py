@@ -1,19 +1,35 @@
 """Centralized constants for agent-wrap."""
 
+import os
 from pathlib import Path
+
+
+def _xdg_config_home() -> Path:
+    """Get XDG_CONFIG_HOME or fallback to ~/.config."""
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+
+
+def _xdg_cache_home() -> Path:
+    """Get XDG_CACHE_HOME or fallback to ~/.cache."""
+    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+
 
 # Default container image
 DEFAULT_IMAGE = "ghcr.io/arahizzz/agent-wrap-runtime:latest"
+
+# Image update interval (1 week in seconds)
+IMAGE_PULL_INTERVAL = 7 * 24 * 60 * 60
+LAST_PULL_FILE = _xdg_cache_home() / "agent-wrap" / ".last-pull"
 
 # Container volumes for persistence
 MISE_DATA_VOLUME = "agent-wrap-data"  # ~/.local/share/mise (tools)
 CACHE_VOLUME = "agent-wrap-cache"  # ~/.cache (general cache)
 
 # Mise config path (auto-created if missing)
-MISE_CONFIG_PATH = Path.home() / ".config" / "agent-wrap" / "mise.toml"
+MISE_CONFIG_PATH = _xdg_config_home() / "agent-wrap" / "mise.toml"
 
 # Config file locations
-GLOBAL_CONFIG_PATH = Path.home() / ".config" / "agent-wrap" / "config.toml"
+GLOBAL_CONFIG_PATH = _xdg_config_home() / "agent-wrap" / "config.toml"
 PROJECT_CONFIG_NAME = ".agent-wrap.toml"
 
 # API keys to auto-forward

@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import subprocess
+import time
 from pathlib import Path
 
 import typer
 from rich.console import Console
 
 from .config import Config, load_config
-from .constants import CACHE_VOLUME, MISE_DATA_VOLUME, TOOL_SHORTCUTS, TOOL_YOLO_FLAGS
+from .constants import (
+    CACHE_VOLUME,
+    DEFAULT_IMAGE,
+    IMAGE_PULL_INTERVAL,
+    LAST_PULL_FILE,
+    MISE_DATA_VOLUME,
+    TOOL_SHORTCUTS,
+    TOOL_YOLO_FLAGS,
+)
 from .container import build_container_spec
 from .runtime import get_runtime
 
@@ -39,7 +49,6 @@ def run(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
     no_network: bool = typer.Option(False, "--no-network", help="Disable network"),
-    image: str | None = typer.Option(None, "--image", help="Container image"),
     memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
 ) -> None:
@@ -63,8 +72,6 @@ def run(
         config.clipboard = True
     if no_network:
         config.no_network = True
-    if image:
-        config.image = image
     if memory:
         config.resources.memory = memory
     if cpus:
@@ -85,7 +92,6 @@ def shell(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
     no_network: bool = typer.Option(False, "--no-network", help="Disable network"),
-    image: str | None = typer.Option(None, "--image", help="Container image"),
     memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
 ) -> None:
@@ -105,8 +111,6 @@ def shell(
         config.clipboard = True
     if no_network:
         config.no_network = True
-    if image:
-        config.image = image
     if memory:
         config.resources.memory = memory
     if cpus:
@@ -139,7 +143,6 @@ def _create_tool_command(tool: str) -> None:
         ),
         no_network: bool = typer.Option(False, "--no-network", help="Disable network"),
         no_yolo: bool = typer.Option(False, "--no-yolo", help="Disable auto-confirm mode"),
-        image: str | None = typer.Option(None, "--image", help="Container image"),
         memory: str | None = typer.Option(
             None, "--memory", "-m", help="Memory limit (e.g., 8g)"
         ),
@@ -161,8 +164,6 @@ def _create_tool_command(tool: str) -> None:
             config.clipboard = True
         if no_network:
             config.no_network = True
-        if image:
-            config.image = image
         if memory:
             config.resources.memory = memory
         if cpus:
@@ -193,7 +194,6 @@ def config_cmd() -> None:
     project_dir = Path.cwd()
     cfg = load_config(project_dir)
 
-    console.print(f"[bold]image:[/] {cfg.image}")
     console.print(f"[bold]runtime:[/] {cfg.runtime or 'auto'}")
     console.print(f"[bold]ssh_agent:[/] {cfg.ssh_agent}")
     console.print(f"[bold]git_config:[/] {cfg.git_config}")
@@ -221,8 +221,6 @@ def reset_volumes(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
     """Reset agent-wrap volumes (removes installed tools and cache)."""
-    import subprocess
-
     volumes = [MISE_DATA_VOLUME, CACHE_VOLUME]
 
     if not force:
@@ -249,12 +247,48 @@ def reset_volumes(
     console.print("[green]Reset complete. Tools will be reinstalled on next run.[/]")
 
 
+@app.command(name="pull-image")
+def pull_image() -> None:
+    """Pull the latest container image."""
+    runtime = get_runtime()
+    if _pull_image(runtime):
+        console.print("[green]Image updated successfully.[/]")
+    else:
+        console.print("[red]Failed to pull image.[/]")
+        raise typer.Exit(1)
+
+
+def _pull_image(runtime) -> bool:
+    """Pull container image and update timestamp. Returns True on success."""
+    console.print(f"[dim]Pulling {DEFAULT_IMAGE}...[/]")
+    result = subprocess.run([runtime.name, "pull", DEFAULT_IMAGE])
+    if result.returncode == 0:
+        LAST_PULL_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LAST_PULL_FILE.write_text(str(time.time()))
+        return True
+    return False
+
+
+def _ensure_fresh_image(runtime) -> None:
+    """Pull image if older than IMAGE_PULL_INTERVAL."""
+    if LAST_PULL_FILE.exists():
+        try:
+            last_pull = float(LAST_PULL_FILE.read_text().strip())
+            if time.time() - last_pull < IMAGE_PULL_INTERVAL:
+                return  # Still fresh
+        except (ValueError, OSError):
+            pass  # Corrupted file, proceed with pull
+
+    _pull_image(runtime)
+
+
 def _run_container(config: Config, project_dir: Path, command: list[str]) -> None:
     """Build spec and run container."""
     runtime = get_runtime(config.runtime)
+    _ensure_fresh_image(runtime)
     spec = build_container_spec(config, project_dir, command)
 
-    console.print(f"[dim]Running in {config.image}...[/]")
+    console.print("[dim]Launching sandbox container...[/]")
     exit_code = runtime.run(spec)
     raise typer.Exit(exit_code)
 

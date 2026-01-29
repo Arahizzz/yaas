@@ -12,7 +12,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-from .constants import DEFAULT_IMAGE, GLOBAL_CONFIG_PATH, PROJECT_CONFIG_NAME
+from .constants import GLOBAL_CONFIG_PATH, PROJECT_CONFIG_NAME
 
 
 @dataclass
@@ -30,7 +30,6 @@ class Config:
     """Runtime configuration, merged from global + project files + CLI flags."""
 
     # Container
-    image: str = DEFAULT_IMAGE
     runtime: str | None = None  # None = auto-detect
 
     # Features (what to mount/forward)
