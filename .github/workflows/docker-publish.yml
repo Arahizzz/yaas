@@ -99,20 +99,3 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
-
-      - name: Delete temporary build images
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Get package versions and delete the temporary build tags
-          for SUFFIX in amd64 arm64; do
-            TAG="build-${{ github.run_id }}-$SUFFIX"
-            VERSION_ID=$(gh api \
-              "/users/arahizzz/packages/container/yaas%2Fruntime/versions" \
-              --jq ".[] | select(.metadata.container.tags[] == \"$TAG\") | .id")
-            if [ -n "$VERSION_ID" ]; then
-              gh api --method DELETE \
-                "/users/arahizzz/packages/container/yaas%2Fruntime/versions/$VERSION_ID" \
-                || echo "Warning: Failed to delete $TAG"
-            fi
-          done
