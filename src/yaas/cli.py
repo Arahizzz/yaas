@@ -19,7 +19,13 @@ from .constants import (
 from .container import build_container_spec
 from .logging import get_logger, setup_logging
 from .runtime import ContainerRuntime, get_runtime
-from .startup_ui import print_startup_footer, print_startup_header, print_step
+from .startup_ui import (
+    is_interactive,
+    print_startup_footer,
+    print_startup_header,
+    print_step,
+    stdin_is_tty,
+)
 from .worktree import (
     WorktreeError,
     check_worktree_in_use,
@@ -312,7 +318,8 @@ def _pull_image(runtime: ContainerRuntime) -> bool:
 def _upgrade_tools(config: Config, project_dir: Path, runtime: ContainerRuntime) -> bool:
     """Run mise upgrade in container. Returns True on success."""
     cmd = ["mise", "upgrade", "--yes"]
-    spec = build_container_spec(config, project_dir, cmd, interactive=False)
+    # TTY enables progress bars, no stdin needed for upgrade
+    spec = build_container_spec(config, project_dir, cmd, tty=is_interactive(), stdin_open=False)
     return runtime.run(spec) == 0
 
 
@@ -338,8 +345,8 @@ def _run_container(
         print_step("Upgrading tools")
         _upgrade_tools(config, project_dir, runtime)
 
-    # Build container spec (may emit warnings via logger)
-    spec = build_container_spec(config, project_dir, command)
+    # Build container spec - TTY only if stdin is a terminal, but always allow stdin
+    spec = build_container_spec(config, project_dir, command, tty=stdin_is_tty())
 
     # Check for concurrent usage warning
     if worktree_name and check_worktree_in_use(project_dir, runtime.name):

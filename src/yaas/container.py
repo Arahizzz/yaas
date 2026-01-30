@@ -26,9 +26,19 @@ def build_container_spec(
     config: Config,
     project_dir: Path,
     command: list[str],
-    interactive: bool = True,
+    *,
+    tty: bool = True,
+    stdin_open: bool = True,
 ) -> ContainerSpec:
-    """Build complete container specification from config."""
+    """Build complete container specification from config.
+
+    Args:
+        config: Container configuration
+        project_dir: Project directory to mount
+        command: Command to run in container
+        tty: Allocate a pseudo-TTY (requires stdin to be a TTY)
+        stdin_open: Keep stdin open (needed for piped input)
+    """
     uid = os.getuid()
     gid = os.getgid()
     home = Path.home()
@@ -51,8 +61,8 @@ def build_container_spec(
         environment=environment,
         mounts=mounts,
         network_mode="none" if config.no_network else None,
-        tty=interactive,
-        stdin_open=interactive,
+        tty=tty,
+        stdin_open=stdin_open,
         groups=groups or None,
         # Resource limits
         memory=config.resources.memory,
