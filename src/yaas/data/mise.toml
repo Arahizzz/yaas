@@ -26,9 +26,9 @@ bat = "latest"
 delta = "latest"
 
 # AI CLIs
-"aqua:anthropics/claude-code" = "latest"
+"npm:@anthropic-ai/claude-code" = "latest"
 # "aqua:anomalyco/opencode" = "latest"
-# "aqua:openai/codex" = "latest"
+# "npm:@openai/codex" = "latest"
 # "npm:@google/gemini-cli" = "latest"
 
 # CLI for docker-in-docker via socket forwarding
