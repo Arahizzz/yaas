@@ -251,7 +251,7 @@ def test_check_worktree_in_use_no_containers() -> None:
             stderr="",
         )
 
-        result = check_worktree_in_use(Path("/some/worktree"))
+        result = check_worktree_in_use(Path("/some/worktree"), ["podman"])
         assert result is False
 
 
@@ -273,7 +273,7 @@ def test_check_worktree_in_use_with_matching_container() -> None:
             stderr="",
         )
 
-        result = check_worktree_in_use(Path("/some/worktree"))
+        result = check_worktree_in_use(Path("/some/worktree"), ["podman"])
         assert result is True
 
 
@@ -287,8 +287,25 @@ def test_check_worktree_in_use_runtime_not_available() -> None:
         )
 
         # Should return False (can't check, so assume not in use)
-        result = check_worktree_in_use(Path("/some/worktree"))
+        result = check_worktree_in_use(Path("/some/worktree"), ["podman"])
         assert result is False
+
+
+def test_check_worktree_in_use_with_sudo_docker() -> None:
+    """Test checking worktree usage with sudo docker command."""
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="[]",
+            stderr="",
+        )
+
+        result = check_worktree_in_use(Path("/some/worktree"), ["sudo", "docker"])
+        assert result is False
+        # Verify the command was built correctly
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        assert call_args[:2] == ["sudo", "docker"]
 
 
 def test_repair_worktrees_no_repairs_needed(git_repo: Path) -> None:
