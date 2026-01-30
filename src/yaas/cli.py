@@ -17,16 +17,28 @@ from .constants import (
     TOOL_YOLO_FLAGS,
 )
 from .container import build_container_spec
-from .runtime import get_runtime
+from .logging import get_logger, setup_logging
+from .runtime import ContainerRuntime, get_runtime
+from .startup_ui import print_startup_footer, print_startup_header, print_step
 from .worktree import (
     WorktreeError,
-    add_worktree as wt_add,
     check_worktree_in_use,
     get_worktree_path,
     get_yaas_worktrees,
+)
+from .worktree import (
+    add_worktree as wt_add,
+)
+from .worktree import (
     remove_worktree as wt_remove,
+)
+from .worktree import (
     repair_worktrees as wt_repair,
 )
+
+# Initialize logging
+setup_logging()
+logger = get_logger()
 
 app = typer.Typer(
     name="yaas",
@@ -289,23 +301,16 @@ def upgrade_tools() -> None:
         raise typer.Exit(1)
 
 
-def _pull_image(runtime) -> bool:
+def _pull_image(runtime: ContainerRuntime) -> bool:
     """Pull container image. Returns True on success."""
-    console.print(f"[dim]Pulling {RUNTIME_IMAGE}...[/]")
     result = subprocess.run([runtime.name, "pull", RUNTIME_IMAGE])
     return result.returncode == 0
 
 
-def _pull_image_if_enabled(config: Config, runtime) -> None:
-    """Pull image if auto_pull_image is enabled."""
-    if config.auto_pull_image:
-        _pull_image(runtime)
-
-
-def _upgrade_tools(config: Config, project_dir: Path, runtime) -> bool:
+def _upgrade_tools(config: Config, project_dir: Path, runtime: ContainerRuntime) -> bool:
     """Run mise upgrade in container. Returns True on success."""
-    console.print("[dim]Upgrading mise tools...[/]")
-    spec = build_container_spec(config, project_dir, ["mise", "upgrade", "--yes"], interactive=False)
+    cmd = ["mise", "upgrade", "--yes"]
+    spec = build_container_spec(config, project_dir, cmd, interactive=False)
     return runtime.run(spec) == 0
 
 
@@ -317,18 +322,31 @@ def _run_container(
 ) -> None:
     """Build spec and run container."""
     runtime = get_runtime(config.runtime)
-    _pull_image_if_enabled(config, runtime)
 
-    # Check for concurrent usage warning
-    if worktree_name:
-        if check_worktree_in_use(project_dir, runtime.name):
-            console.print(
-                f"[yellow]Warning: Worktree '{worktree_name}' may already be in use by another container[/]"
-            )
+    # Show startup header
+    print_startup_header()
 
+    # Pull image if enabled
+    if config.auto_pull_image:
+        print_step("Pulling image")
+        _pull_image(runtime)
+
+    # Upgrade tools if enabled
+    if config.auto_upgrade_tools:
+        print_step("Upgrading tools")
+        _upgrade_tools(config, project_dir, runtime)
+
+    # Build container spec (may emit warnings via logger)
     spec = build_container_spec(config, project_dir, command)
 
-    console.print("[dim]Launching sandbox container...[/]")
+    # Check for concurrent usage warning
+    if worktree_name and check_worktree_in_use(project_dir, runtime.name):
+        logger.warning(f"Worktree '{worktree_name}' may already be in use by another container")
+
+    print_step("Launching sandbox")
+    print_startup_footer()
+
+    # Run the interactive container
     exit_code = runtime.run(spec)
     raise typer.Exit(exit_code)
 

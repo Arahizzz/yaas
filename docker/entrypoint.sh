@@ -19,11 +19,9 @@ fi
 # ============================================================
 # Mise setup (MISE_YES=1 auto-confirms trust prompts)
 # ============================================================
-
-# Run mise upgrade if enabled (controlled by YAAS_AUTO_UPGRADE_TOOLS env var)
-if [[ "${YAAS_AUTO_UPGRADE_TOOLS:-true}" == "true" ]]; then
-    mise upgrade --yes || echo "Warning: Some tools failed to install/upgrade"
-fi
+# Note: mise upgrade is now run in a separate container by yaas before
+# the interactive container starts. This allows output to be captured
+# in the startup UI panel.
 
 # Activate mise - this adds shims to PATH and loads env vars from [env] section
 eval "$(mise activate bash)"
