@@ -7,8 +7,6 @@ import shutil
 from importlib import resources
 from pathlib import Path
 
-from rich.console import Console
-
 from .config import Config
 from .constants import (
     API_KEYS,
@@ -18,9 +16,10 @@ from .constants import (
     MISE_DATA_VOLUME,
     RUNTIME_IMAGE,
 )
+from .logging import get_logger
 from .runtime import ContainerSpec, Mount
 
-console = Console()
+logger = get_logger()
 
 
 def build_container_spec(
@@ -132,11 +131,11 @@ def _add_ssh_agent(mounts: list[Mount]) -> None:
     """Mount SSH agent socket."""
     ssh_sock = os.environ.get("SSH_AUTH_SOCK")
     if not ssh_sock:
-        console.print("[yellow]Warning: SSH_AUTH_SOCK not set, skipping SSH agent[/]")
+        logger.warning("SSH_AUTH_SOCK not set, skipping SSH agent")
         return
 
     if not Path(ssh_sock).exists():
-        console.print(f"[yellow]Warning: SSH socket {ssh_sock} not found[/]")
+        logger.warning(f"SSH socket {ssh_sock} not found")
         return
 
     mounts.append(Mount(ssh_sock, "/ssh-agent"))
@@ -156,9 +155,7 @@ def _add_container_socket(mounts: list[Mount], groups: list[int], uid: int) -> N
                 groups.append(sock_gid)
             return
 
-    console.print(
-        "[yellow]Warning: No container socket found, docker/podman won't work inside sandbox[/]"
-    )
+    logger.warning("No container socket found, docker/podman won't work inside sandbox")
 
 
 def _add_clipboard_support(mounts: list[Mount]) -> None:
@@ -182,9 +179,7 @@ def _add_clipboard_support(mounts: list[Mount]) -> None:
             mounts.append(Mount(str(x11_socket), str(x11_socket), read_only=True))
             return
 
-    console.print(
-        "[yellow]Warning: No display server detected, clipboard won't work inside sandbox[/]"
-    )
+    logger.warning("No display server detected, clipboard won't work inside sandbox")
 
 
 def _add_mise_support(mounts: list[Mount]) -> None:
@@ -204,8 +199,8 @@ def _add_mise_support(mounts: list[Mount]) -> None:
         with resources.files("yaas.data").joinpath("mise.toml").open("rb") as src:
             with open(MISE_CONFIG_PATH, "wb") as dst:
                 shutil.copyfileobj(src, dst)
-        console.print(f"[green]Created default mise config at {MISE_CONFIG_PATH}[/]")
-        console.print("[dim]Update this file to customize which tools are available in your sandbox[/]")
+        logger.info(f"Created default mise config at {MISE_CONFIG_PATH}")
+        logger.info("Update this file to customize which tools are available in your sandbox")
 
     # Mount mise config
     mounts.append(Mount(str(MISE_CONFIG_PATH), f"{sandbox_home}/.config/mise/config.toml"))
@@ -235,8 +230,6 @@ def _build_environment(
         "HOME": sandbox_home,
         "PROJECT_PATH": str(project_dir),
         "YAAS": "1",
-        # Auto-upgrade tools on container start (controlled by entrypoint.sh)
-        "YAAS_AUTO_UPGRADE_TOOLS": "true" if config.auto_upgrade_tools else "false",
         # Make npm use XDG-compliant cache path
         "npm_config_cache": f"{sandbox_home}/.cache/npm",
         # Mise configuration
