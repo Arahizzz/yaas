@@ -5,9 +5,13 @@ from pathlib import Path
 import os
 import platformdirs
 
-# Cross-platform config and cache directories
+# Cross-platform config, cache, and data directories
 CONFIG_DIR = Path(platformdirs.user_config_dir("yaas"))
 CACHE_DIR = Path(platformdirs.user_cache_dir("yaas"))
+DATA_DIR = Path(platformdirs.user_data_dir("yaas"))
+
+# Worktree storage location
+WORKTREES_DIR = DATA_DIR / "worktrees"
 
 # Runtime container image
 RUNTIME_IMAGE = os.getenv("YAAS_RUNTIME_IMAGE", "ghcr.io/arahizzz/yaas/runtime:0.x-latest")
