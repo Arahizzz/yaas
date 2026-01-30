@@ -8,20 +8,30 @@ ENV LC_ALL=C.UTF-8
 # System packages (only things not available via mise)
 # ============================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Build essentials (for native compilation)
+    # Core build tools
     build-essential make cmake pkg-config \
+    autoconf automake libtool \
+    # Essential development libraries
+    libssl-dev zlib1g-dev libxml2-dev \
     # VCS and security
     git openssh-client gnupg ca-certificates \
-    # Basic utilities
-    curl wget unzip zip xz-utils \
+    # Utilities
+    curl wget unzip zip xz-utils zstd \
     sudo less vim nano \
-    # Clipboard tools for image pasting
+    # Locale support (often needed)
+    locales icu-devtools \
+    # Clipboard tools
     wl-clipboard xclip \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Allow passwordless sudo for all users
 RUN echo "ALL ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd \
     && chmod 440 /etc/sudoers.d/nopasswd
+
+# Configure PAM for sudo to skip account validation (shadow file not available
+# when passwd/group are mounted from host but shadow isn't)
+RUN echo -e "auth sufficient pam_permit.so\naccount sufficient pam_permit.so\nsession sufficient pam_permit.so" > /etc/pam.d/sudo
 
 # ============================================================
 # Install mise (tool version manager)
