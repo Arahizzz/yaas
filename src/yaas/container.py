@@ -205,6 +205,7 @@ def _add_mise_support(mounts: list[Mount]) -> None:
             with open(MISE_CONFIG_PATH, "wb") as dst:
                 shutil.copyfileobj(src, dst)
         console.print(f"[green]Created default mise config at {MISE_CONFIG_PATH}[/]")
+        console.print("[dim]Update this file to customize which tools are available in your sandbox[/]")
 
     # Mount mise config
     mounts.append(Mount(str(MISE_CONFIG_PATH), f"{sandbox_home}/.config/mise/config.toml"))

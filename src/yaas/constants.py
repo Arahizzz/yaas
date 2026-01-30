@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import os
 import platformdirs
 
 # Cross-platform config and cache directories
@@ -9,7 +10,7 @@ CONFIG_DIR = Path(platformdirs.user_config_dir("yaas"))
 CACHE_DIR = Path(platformdirs.user_cache_dir("yaas"))
 
 # Runtime container image
-RUNTIME_IMAGE = "ghcr.io/arahizzz/yaas/runtime:0.x-latest"
+RUNTIME_IMAGE = os.getenv("YAAS_RUNTIME_IMAGE", "ghcr.io/arahizzz/yaas/runtime:0.x-latest")
 
 # Container volumes for persistence
 MISE_DATA_VOLUME = "yaas-data"  # ~/.local/share/mise (tools)
