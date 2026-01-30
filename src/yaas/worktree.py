@@ -224,12 +224,12 @@ def get_yaas_worktrees(project_dir: Path | None = None) -> list[dict[str, str]]:
     return yaas_worktrees
 
 
-def check_worktree_in_use(worktree_path: Path, runtime: str = "podman") -> bool:
+def check_worktree_in_use(worktree_path: Path, command_prefix: list[str]) -> bool:
     """Check if a worktree is currently mounted in a running container.
 
     Queries the container runtime to check if any container has the worktree path mounted.
     """
-    cmd = [runtime, "ps", "--format", "json"]
+    cmd = [*command_prefix, "ps", "--format", "json"]
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:

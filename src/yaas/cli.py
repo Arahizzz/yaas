@@ -271,7 +271,7 @@ def reset_volumes(
     runtime = get_runtime()
     for volume in volumes:
         result = subprocess.run(
-            [runtime.name, "volume", "rm", "-f", volume],
+            [*runtime.command_prefix, "volume", "rm", "-f", volume],
             capture_output=True,
             text=True,
         )
@@ -311,7 +311,7 @@ def upgrade_tools() -> None:
 
 def _pull_image(runtime: ContainerRuntime) -> bool:
     """Pull container image. Returns True on success."""
-    result = subprocess.run([runtime.name, "pull", RUNTIME_IMAGE])
+    result = subprocess.run([*runtime.command_prefix, "pull", RUNTIME_IMAGE])
     return result.returncode == 0
 
 
@@ -349,7 +349,7 @@ def _run_container(
     spec = build_container_spec(config, project_dir, command, tty=stdin_is_tty())
 
     # Check for concurrent usage warning
-    if worktree_name and check_worktree_in_use(project_dir, runtime.name):
+    if worktree_name and check_worktree_in_use(project_dir, runtime.command_prefix):
         logger.warning(f"Worktree '{worktree_name}' may already be in use by another container")
 
     print_step("Launching sandbox")
