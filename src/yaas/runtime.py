@@ -83,6 +83,11 @@ class ContainerRuntime(Protocol):
 
     name: str
 
+    @property
+    def command_prefix(self) -> list[str]:
+        """Command prefix for invoking the runtime (e.g., ['docker'] or ['sudo', 'docker'])."""
+        ...
+
     def is_available(self) -> bool:
         """Check if this runtime is available."""
         ...
@@ -97,6 +102,10 @@ class PodmanRuntime:
 
     name = "podman"
 
+    @property
+    def command_prefix(self) -> list[str]:
+        return ["podman"]
+
     def is_available(self) -> bool:
         return shutil.which("podman") is not None
 
@@ -106,7 +115,7 @@ class PodmanRuntime:
         return result.returncode
 
     def _build_command(self, spec: ContainerSpec) -> list[str]:
-        cmd = ["podman", "run", "--rm"]
+        cmd = [*self.command_prefix, "run", "--rm"]
 
         # Use keep-id to preserve UID mapping in rootless podman.
         # This makes host UID 1000 = container UID 1000, so files are
@@ -186,8 +195,23 @@ class DockerRuntime:
 
     name = "docker"
 
+    def __init__(self) -> None:
+        self._use_sudo = False
+        # Check if we need sudo to access docker socket
+        if not _can_access_docker_socket() and shutil.which("sudo") is not None:
+            self._use_sudo = True
+
+    @property
+    def command_prefix(self) -> list[str]:
+        if self._use_sudo:
+            return ["sudo", "docker"]
+        return ["docker"]
+
     def is_available(self) -> bool:
-        return shutil.which("docker") is not None
+        if shutil.which("docker") is None:
+            return False
+        # Available if we can access socket directly OR via sudo
+        return _can_access_docker_socket() or self._use_sudo
 
     def run(self, spec: ContainerSpec) -> int:
         cmd = self._build_command(spec)
@@ -195,7 +219,7 @@ class DockerRuntime:
         return result.returncode
 
     def _build_command(self, spec: ContainerSpec) -> list[str]:
-        cmd = ["docker", "run", "--rm"]
+        cmd = [*self.command_prefix, "run", "--rm"]
 
         # Interactive/TTY
         if spec.tty:
