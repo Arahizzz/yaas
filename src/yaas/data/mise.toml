@@ -1,13 +1,23 @@
+# Mise configuration file for container-scoped tool management
+# You can also define project-specific mise.toml files to scope tools to specific projects
+# See https://mise.jdx.dev/configuration.html
 [tools]
 # Runtimes
-node = "lts"
+node = "latest"
+# bun = "latest"
 python = "latest"
-go = "latest"
+# go = "latest"
+# dotnet = "latest"
+# java = "latest"
+# ruby = "latest"
+# "ubi:adwinying/php"= "8.4"
 
 # Python tooling
 uv = "latest"
 
 # Utilities (from mise registry)
+# By default yaas image already contains coreutils, git, curl, wget, unzip, zip, xz-utils, sudo, less, vim, nano.
+# Everything else needs to be specified here.
 ripgrep = "latest"
 fd = "latest"
 fzf = "latest"
@@ -15,12 +25,17 @@ jq = "latest"
 bat = "latest"
 delta = "latest"
 
-# AI CLIs (via aqua backend)
+# AI CLIs
 "aqua:anthropics/claude-code" = "latest"
+# "aqua:anomalyco/opencode" = "latest"
+# "aqua:openai/codex" = "latest"
+# "npm:@google/gemini-cli" = "latest"
 
-# Container CLIs (for docker-in-docker via socket forwarding)
+# CLI for docker-in-docker via socket forwarding
 docker-cli = "latest"
-podman = "latest"
+
+[settings]
+idiomatic_version_file_enable_tools = ["node", "python", "go", "php", "dotnet", "java", "ruby"] # https://mise.jdx.dev/configuration.html#idiomatic-version-files
 
 [env]
 # User can add custom env vars here
