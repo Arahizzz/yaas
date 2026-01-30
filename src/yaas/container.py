@@ -246,9 +246,10 @@ def _build_environment(
         env["TERM"] = term
 
     # Forward API keys
-    for key in API_KEYS:
-        if value := os.environ.get(key):
-            env[key] = value
+    if config.forward_api_keys:
+        for key in API_KEYS:
+            if value := os.environ.get(key):
+                env[key] = value
 
     # SSH agent
     if config.ssh_agent and os.environ.get("SSH_AUTH_SOCK"):

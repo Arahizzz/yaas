@@ -232,6 +232,8 @@ def config_cmd() -> None:
     console.print("\n[bold]Auto-update:[/]")
     console.print(f"  auto_pull_image: {cfg.auto_pull_image}")
     console.print(f"  auto_upgrade_tools: {cfg.auto_upgrade_tools}")
+    console.print("\n[bold]Security:[/]")
+    console.print(f"  forward_api_keys: {cfg.forward_api_keys}")
     console.print("\n[bold]Resource limits:[/]")
     console.print(f"  memory: {cfg.resources.memory}")
     console.print(f"  cpus: {cfg.resources.cpus or 'unlimited'}")

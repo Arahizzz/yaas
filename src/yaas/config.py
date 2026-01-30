@@ -54,6 +54,9 @@ class Config:
     auto_pull_image: bool = True  # Pull image on every start
     auto_upgrade_tools: bool = True  # Run mise upgrade on every start
 
+    # Security
+    forward_api_keys: bool = True  # Forward API keys (ANTHROPIC_API_KEY, etc.)
+
 
 def load_config(project_dir: Path) -> Config:
     """Load and merge global config → project config."""
