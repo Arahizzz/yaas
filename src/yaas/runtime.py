@@ -2,10 +2,46 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
+
+# Standard Docker socket paths
+_DOCKER_SOCKET_PATHS = [
+    "/var/run/docker.sock",
+    "/run/docker.sock",
+]
+
+
+def _get_docker_socket_paths() -> list[Path]:
+    """Get possible Docker socket paths, checking DOCKER_HOST first."""
+    paths: list[Path] = []
+
+    # Check DOCKER_HOST for custom socket path
+    docker_host = os.environ.get("DOCKER_HOST", "")
+    if docker_host.startswith("unix://"):
+        paths.append(Path(docker_host[7:]))  # Strip unix:// prefix
+
+    # Check XDG_RUNTIME_DIR for rootless Docker
+    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg_runtime:
+        paths.append(Path(xdg_runtime) / "docker.sock")
+
+    # Standard paths
+    paths.extend(Path(p) for p in _DOCKER_SOCKET_PATHS)
+
+    return paths
+
+
+def _can_access_docker_socket() -> bool:
+    """Check if Docker socket is accessible without sudo."""
+    for sock_path in _get_docker_socket_paths():
+        if sock_path.exists() and os.access(sock_path, os.R_OK | os.W_OK):
+            return True
+    return False
 
 
 @dataclass
