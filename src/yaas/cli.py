@@ -18,12 +18,27 @@ from .constants import (
 )
 from .container import build_container_spec
 from .runtime import get_runtime
+from .worktree import (
+    WorktreeError,
+    add_worktree as wt_add,
+    check_worktree_in_use,
+    get_worktree_path,
+    get_yaas_worktrees,
+    remove_worktree as wt_remove,
+    repair_worktrees as wt_repair,
+)
 
 app = typer.Typer(
     name="yaas",
     help="Run AI coding agents in sandboxed containers",
     no_args_is_help=True,
 )
+worktree_app = typer.Typer(
+    name="worktree",
+    help="Manage git worktrees for parallel development",
+    no_args_is_help=True,
+)
+app.add_typer(worktree_app, name="worktree")
 console = Console()
 
 
@@ -36,6 +51,7 @@ console = Console()
 )
 def run(
     ctx: typer.Context,
+    worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
     ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
     git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
     ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
@@ -53,7 +69,7 @@ def run(
     if not ctx.args:
         raise typer.BadParameter("Missing command to run")
 
-    project_dir = Path.cwd()
+    project_dir, worktree_name = _resolve_worktree(worktree)
     config = load_config(project_dir)
 
     # CLI flags override config
@@ -74,11 +90,12 @@ def run(
     if cpus:
         config.resources.cpus = cpus
 
-    _run_container(config, project_dir, ctx.args)
+    _run_container(config, project_dir, ctx.args, worktree_name)
 
 
 @app.command()
 def shell(
+    worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
     ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
     git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
     ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
@@ -93,7 +110,7 @@ def shell(
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
 ) -> None:
     """Start interactive shell in sandbox."""
-    project_dir = Path.cwd()
+    project_dir, worktree_name = _resolve_worktree(worktree)
     config = load_config(project_dir)
 
     if ssh_agent:
@@ -113,7 +130,7 @@ def shell(
     if cpus:
         config.resources.cpus = cpus
 
-    _run_container(config, project_dir, ["bash"])
+    _run_container(config, project_dir, ["bash"], worktree_name)
 
 
 def _create_tool_command(tool: str) -> None:
@@ -129,6 +146,7 @@ def _create_tool_command(tool: str) -> None:
     )
     def tool_command(
         ctx: typer.Context,
+        worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
         ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
         git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
         ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
@@ -146,7 +164,7 @@ def _create_tool_command(tool: str) -> None:
         cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
     ) -> None:
         """Run AI tool in sandbox with YOLO mode (auto-confirm)."""
-        project_dir = Path.cwd()
+        project_dir, worktree_name = _resolve_worktree(worktree)
         config = load_config(project_dir)
 
         if ssh_agent:
@@ -172,7 +190,7 @@ def _create_tool_command(tool: str) -> None:
             command.extend(TOOL_YOLO_FLAGS.get(tool, []))
         command.extend(ctx.args)
 
-        _run_container(config, project_dir, command)
+        _run_container(config, project_dir, command, worktree_name)
 
     # Update docstring
     tool_command.__doc__ = (
@@ -291,15 +309,124 @@ def _upgrade_tools(config: Config, project_dir: Path, runtime) -> bool:
     return runtime.run(spec) == 0
 
 
-def _run_container(config: Config, project_dir: Path, command: list[str]) -> None:
+def _run_container(
+    config: Config,
+    project_dir: Path,
+    command: list[str],
+    worktree_name: str | None = None,
+) -> None:
     """Build spec and run container."""
     runtime = get_runtime(config.runtime)
     _pull_image_if_enabled(config, runtime)
+
+    # Check for concurrent usage warning
+    if worktree_name:
+        if check_worktree_in_use(project_dir, runtime.name):
+            console.print(
+                f"[yellow]Warning: Worktree '{worktree_name}' may already be in use by another container[/]"
+            )
+
     spec = build_container_spec(config, project_dir, command)
 
     console.print("[dim]Launching sandbox container...[/]")
     exit_code = runtime.run(spec)
     raise typer.Exit(exit_code)
+
+
+def _resolve_worktree(worktree_name: str | None) -> tuple[Path, str | None]:
+    """Resolve worktree name to project directory.
+
+    Returns (project_dir, worktree_name) tuple.
+    If worktree_name is None, returns (cwd, None).
+    """
+    if worktree_name is None:
+        return Path.cwd(), None
+
+    try:
+        worktree_path = get_worktree_path(worktree_name)
+        if worktree_path is None:
+            console.print(f"[red]Worktree '{worktree_name}' not found[/]")
+            console.print("[dim]Use 'yaas worktree list' to see available worktrees[/]")
+            raise typer.Exit(1)
+        return worktree_path, worktree_name
+    except WorktreeError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1)
+
+
+# Worktree subcommands
+@worktree_app.command(name="add")
+def worktree_add(
+    name: str = typer.Argument(..., help="Name for the new worktree"),
+    branch: str | None = typer.Option(None, "--branch", "-b", help="Create new branch"),
+) -> None:
+    """Create a new worktree for parallel development."""
+    try:
+        worktree_path = wt_add(name, branch)
+        console.print(f"[green]Created worktree '{name}' at {worktree_path}[/]")
+        if branch:
+            console.print(f"[dim]On new branch: {branch}[/]")
+    except WorktreeError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1)
+
+
+@worktree_app.command(name="list")
+def worktree_list() -> None:
+    """List worktrees for current project."""
+    try:
+        worktrees = get_yaas_worktrees()
+        if not worktrees:
+            console.print("[dim]No YAAS worktrees found for this project[/]")
+            console.print("[dim]Use 'yaas worktree add NAME' to create one[/]")
+            return
+
+        console.print("[bold]YAAS Worktrees:[/]")
+        for wt in worktrees:
+            name = wt.get("name", "unknown")
+            branch = wt.get("branch", "").replace("refs/heads/", "")
+            detached = wt.get("detached") == "true"
+
+            if detached:
+                branch_info = f"[dim](detached at {wt.get('head', '')[:7]})[/]"
+            elif branch:
+                branch_info = f"[cyan]{branch}[/]"
+            else:
+                branch_info = "[dim](no branch)[/]"
+
+            console.print(f"  {name}: {branch_info}")
+    except WorktreeError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1)
+
+
+@worktree_app.command(name="remove")
+def worktree_remove(
+    name: str = typer.Argument(..., help="Name of the worktree to remove"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force removal even with changes"),
+) -> None:
+    """Remove a worktree."""
+    try:
+        wt_remove(name, force)
+        console.print(f"[green]Removed worktree '{name}'[/]")
+    except WorktreeError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1)
+
+
+@worktree_app.command(name="repair")
+def worktree_repair() -> None:
+    """Fix worktree paths after moving project directory."""
+    try:
+        messages = wt_repair()
+        if messages:
+            for msg in messages:
+                console.print(f"[green]{msg}[/]")
+        else:
+            console.print("[dim]No repairs needed[/]")
+    except WorktreeError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1)
 
 
 def main() -> None:
