@@ -24,6 +24,36 @@ Container sandboxing for AI agents is nothing new, but most solutions have frict
 - **Network isolation** - Optional `--no-network` for paranoid mode
 - **Git worktrees** - Parallel development support with `yaas worktree`
 
+## Platform Support
+
+| Platform | Support Level | Notes |
+|----------|---------------|-------|
+| Linux | Full | Primary platform, Podman or Docker |
+| macOS | Experimental | Docker Desktop recommended |
+| Windows | Experimental | WSL2 only |
+
+**Note:** Linux is the primary supported platform. macOS and Windows/WSL2 support is experimental and has not been extensively tested. Contributions and bug reports for non-Linux platforms are welcome.
+
+### macOS (Experimental)
+
+YAAS should work on macOS with Docker Desktop, but has not been thoroughly tested. Known differences:
+
+- **File ownership**: Docker Desktop handles file ownership through its file sharing layer (VirtioFS), so files created in containers should be owned by your macOS user.
+- **Podman**: Not supported on macOS.
+- **Clipboard**: Direct clipboard access is not available. Display server sockets (Wayland/X11) don't exist on macOS.
+- **UID passthrough**: The `/etc/passwd` mount is skipped on macOS since Docker Desktop handles user mapping differently.
+
+### Windows (Experimental)
+
+YAAS does not support native Windows. Instead, run YAAS inside WSL2:
+
+1. Install WSL2: `wsl --install`
+2. Open a WSL2 terminal (e.g., Ubuntu)
+3. Install Docker or Podman inside WSL2
+4. Install YAAS: `pip install yaas` or `uv tool install yaas`
+
+With WSLg (Windows Subsystem for Linux GUI), clipboard features work as they do on Linux.
+
 ## Installation
 
 ```bash
@@ -215,12 +245,12 @@ yaas reset-volumes
 
 ## How It Works
 
-### UID Passthrough
+### UID Passthrough (Linux)
 
-Traditional container sandboxes run processes as root or a fixed UID, which causes file permission problems when the container writes to mounted directories. YAAS mounts `/etc/passwd` and `/etc/group` from the host and runs the container process with your actual UID:
+Traditional container sandboxes run processes as root or a fixed UID, which causes file permission problems when the container writes to mounted directories. On **Linux**, YAAS mounts `/etc/passwd` and `/etc/group` from the host and runs the container process with your actual UID:
 
 ```
-Host                              Container
+Host (Linux)                      Container
 ──────────────────────────────────────────────────────────────
 /etc/passwd (ro) ─────────────────> /etc/passwd
 /etc/group (ro)  ─────────────────> /etc/group
@@ -232,6 +262,8 @@ Host                              Container
 
 This means files created inside the container have correct ownership on the host. Config files like `.gitconfig` and `.claude` can be mounted directly instead of copied. Container sockets also work properly for docker-in-docker scenarios.
 
+**Note:** On macOS, Docker Desktop handles file ownership through its file sharing layer (VirtioFS), so files created in containers should be owned by your macOS user without explicit UID passthrough. YAAS skips the `/etc/passwd` mount on macOS since Docker Desktop manages this differently.
+
 ### Persistent Volumes
 
 YAAS uses named volumes to persist data across container sessions:
@@ -240,6 +272,27 @@ YAAS uses named volumes to persist data across container sessions:
 - `yaas-cache` stores general cache data (`~/.cache`)
 
 This is why tools installed via mise don't need to be reinstalled every time you start a new container. Running `yaas reset-volumes` deletes these volumes, which will trigger a fresh tool installation on the next run.
+
+## Clipboard and Image Pasting
+
+The `--clipboard` flag enables clipboard access for pasting images into AI agents. This works by mounting display server sockets into the container.
+
+### How It Works
+
+| Platform | Method | Image Support |
+|----------|--------|---------------|
+| Linux (Wayland) | Mount Wayland socket | `wl-paste --type image/png` |
+| Linux (X11) | Mount X11 socket | `xclip -t image/png -o` |
+| macOS | Not supported | See workaround below |
+| Windows/WSL2 | WSLg provides X11 | Works if WSLg is enabled |
+
+### macOS Workaround
+
+Since macOS doesn't have display server sockets, direct clipboard access isn't possible. To paste images:
+
+1. Save the image to a file on macOS
+2. Mount the directory: `yaas claude --mount ~/Downloads:/downloads`
+3. Reference the image at `/downloads/image.png` in your prompt
 
 ## Security Considerations
 
