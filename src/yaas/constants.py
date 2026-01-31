@@ -1,8 +1,8 @@
 """Centralized constants for YAAS."""
 
+import os
 from pathlib import Path
 
-import os
 import platformdirs
 
 # Cross-platform config, cache, and data directories
@@ -60,9 +60,3 @@ TOOL_YOLO_FLAGS: dict[str, list[str]] = {
     "opencode": [],
 }
 
-# Container sockets for docker-in-docker
-CONTAINER_SOCKETS = [
-    "/run/user/{uid}/podman/podman.sock",  # Rootless podman
-    "/var/run/docker.sock",  # Docker
-    "/run/podman/podman.sock",  # Rootful podman
-]

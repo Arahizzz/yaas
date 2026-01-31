@@ -6,39 +6,14 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 
-# Standard Docker socket paths
-_DOCKER_SOCKET_PATHS = [
-    "/var/run/docker.sock",
-    "/run/docker.sock",
-]
-
-
-def _get_docker_socket_paths() -> list[Path]:
-    """Get possible Docker socket paths, checking DOCKER_HOST first."""
-    paths: list[Path] = []
-
-    # Check DOCKER_HOST for custom socket path
-    docker_host = os.environ.get("DOCKER_HOST", "")
-    if docker_host.startswith("unix://"):
-        paths.append(Path(docker_host[7:]))  # Strip unix:// prefix
-
-    # Check XDG_RUNTIME_DIR for rootless Docker
-    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg_runtime:
-        paths.append(Path(xdg_runtime) / "docker.sock")
-
-    # Standard paths
-    paths.extend(Path(p) for p in _DOCKER_SOCKET_PATHS)
-
-    return paths
+from .platform import get_container_socket_paths, is_linux
 
 
 def _can_access_docker_socket() -> bool:
     """Check if Docker socket is accessible without sudo."""
-    for sock_path in _get_docker_socket_paths():
+    for sock_path in get_container_socket_paths(docker_only=True):
         if sock_path.exists() and os.access(sock_path, os.R_OK | os.W_OK):
             return True
     return False
@@ -52,6 +27,16 @@ class Mount:
     target: str
     type: str = "bind"  # bind, volume, tmpfs
     read_only: bool = False
+
+
+def _format_mount(m: Mount) -> str:
+    """Format mount for --mount flag (shared by Podman and Docker)."""
+    parts = [f"type={m.type}", f"source={m.source}", f"target={m.target}"]
+
+    if m.read_only:
+        parts.append("readonly")
+
+    return ",".join(parts)
 
 
 @dataclass
@@ -98,7 +83,11 @@ class ContainerRuntime(Protocol):
 
 
 class PodmanRuntime:
-    """Podman implementation using CLI subprocess."""
+    """Podman implementation using CLI subprocess.
+
+    Note: Only supported on Linux. macOS Podman is experimental and
+    doesn't support the same rootless features.
+    """
 
     name = "podman"
 
@@ -107,6 +96,9 @@ class PodmanRuntime:
         return ["podman"]
 
     def is_available(self) -> bool:
+        # Podman only supported on Linux
+        if not is_linux():
+            return False
         return shutil.which("podman") is not None
 
     def run(self, spec: ContainerSpec) -> int:
@@ -151,8 +143,7 @@ class PodmanRuntime:
 
         # Mounts
         for m in spec.mounts:
-            mount_str = self._format_mount(m)
-            cmd.extend(["--mount", mount_str])
+            cmd.extend(["--mount", _format_mount(m)])
 
         # Resource limits
         if spec.memory:
@@ -172,22 +163,6 @@ class PodmanRuntime:
         cmd.extend(spec.command)
 
         return cmd
-
-    def _format_mount(self, m: Mount) -> str:
-        """Format mount for --mount flag."""
-        parts = [f"type={m.type}"]
-
-        if m.type == "volume":
-            parts.append(f"source={m.source}")
-        else:
-            parts.append(f"source={m.source}")
-
-        parts.append(f"target={m.target}")
-
-        if m.read_only:
-            parts.append("readonly")
-
-        return ",".join(parts)
 
 
 class DockerRuntime:
@@ -248,8 +223,7 @@ class DockerRuntime:
 
         # Mounts
         for m in spec.mounts:
-            mount_str = self._format_mount(m)
-            cmd.extend(["--mount", mount_str])
+            cmd.extend(["--mount", _format_mount(m)])
 
         # Resource limits
         if spec.memory:
@@ -269,22 +243,6 @@ class DockerRuntime:
         cmd.extend(spec.command)
 
         return cmd
-
-    def _format_mount(self, m: Mount) -> str:
-        """Format mount for --mount flag."""
-        parts = [f"type={m.type}"]
-
-        if m.type == "volume":
-            parts.append(f"source={m.source}")
-        else:
-            parts.append(f"source={m.source}")
-
-        parts.append(f"target={m.target}")
-
-        if m.read_only:
-            parts.append("readonly")
-
-        return ",".join(parts)
 
 
 def get_runtime(preference: str | None = None) -> ContainerRuntime:
