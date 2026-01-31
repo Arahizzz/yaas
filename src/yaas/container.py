@@ -11,12 +11,18 @@ from .config import Config
 from .constants import (
     API_KEYS,
     CACHE_VOLUME,
-    CONTAINER_SOCKETS,
     MISE_CONFIG_PATH,
     MISE_DATA_VOLUME,
     RUNTIME_IMAGE,
 )
 from .logging import get_logger
+from .platform import (
+    get_container_socket_paths,
+    get_ssh_agent_socket,
+    get_uid_gid,
+    is_linux,
+    is_macos,
+)
 from .runtime import ContainerSpec, Mount
 
 logger = get_logger()
@@ -39,13 +45,12 @@ def build_container_spec(
         tty: Allocate a pseudo-TTY (requires stdin to be a TTY)
         stdin_open: Keep stdin open (needed for piped input)
     """
-    uid = os.getuid()
-    gid = os.getgid()
+    uid, gid = get_uid_gid()
     home = Path.home()
     sandbox_home = "/home"
 
     # Build mounts and collect supplementary groups
-    mounts, groups = _build_mounts(config, project_dir, home, sandbox_home, uid)
+    mounts, groups = _build_mounts(config, project_dir, home, sandbox_home)
 
     # Build environment
     environment = _build_environment(config, project_dir, sandbox_home)
@@ -77,15 +82,16 @@ def _build_mounts(
     project_dir: Path,
     home: Path,
     sandbox_home: str,
-    uid: int,
 ) -> tuple[list[Mount], list[int]]:
     """Assemble all mounts and supplementary groups."""
     mounts: list[Mount] = []
     groups: list[int] = []
 
     # UID/GID passthrough - mount passwd/group so user is recognized
-    mounts.append(Mount("/etc/passwd", "/etc/passwd", read_only=True))
-    mounts.append(Mount("/etc/group", "/etc/group", read_only=True))
+    # Only on Linux - macOS Docker Desktop handles this differently
+    if is_linux():
+        mounts.append(Mount("/etc/passwd", "/etc/passwd", read_only=True))
+        mounts.append(Mount("/etc/group", "/etc/group", read_only=True))
 
     # Project directory at real path (critical for docker-in-docker!)
     mounts.append(
@@ -121,7 +127,7 @@ def _build_mounts(
 
     # Container socket (docker/podman inside sandbox)
     if config.container_socket:
-        _add_container_socket(mounts, groups, uid)
+        _add_container_socket(mounts, groups)
 
     # Clipboard support (for image pasting)
     if config.clipboard:
@@ -138,38 +144,51 @@ def _build_mounts(
 
 
 def _add_ssh_agent(mounts: list[Mount]) -> None:
-    """Mount SSH agent socket."""
-    ssh_sock = os.environ.get("SSH_AUTH_SOCK")
-    if not ssh_sock:
-        logger.warning("SSH_AUTH_SOCK not set, skipping SSH agent")
+    """Mount SSH agent socket with platform-aware detection."""
+    # Use platform-aware socket detection (handles macOS launchd sockets)
+    sock_path = get_ssh_agent_socket()
+    if not sock_path:
+        logger.warning("SSH agent socket not found, skipping SSH agent")
         return
 
-    if not Path(ssh_sock).exists():
-        logger.warning(f"SSH socket {ssh_sock} not found")
-        return
-
-    mounts.append(Mount(ssh_sock, "/ssh-agent"))
+    mounts.append(Mount(str(sock_path), "/ssh-agent"))
 
 
-def _add_container_socket(mounts: list[Mount], groups: list[int], uid: int) -> None:
-    """Mount container runtime socket for docker-in-docker."""
-    for sock_template in CONTAINER_SOCKETS:
-        sock = sock_template.format(uid=uid)
-        sock_path = Path(sock)
+def _add_container_socket(mounts: list[Mount], groups: list[int]) -> None:
+    """Mount container runtime socket for docker-in-docker.
+
+    Uses platform-aware socket detection to support Docker Desktop and
+    Colima on macOS, in addition to standard Linux socket paths.
+    """
+    for sock_path in get_container_socket_paths():
         if sock_path.exists():
             # Mount at same path so docker/podman CLI works unchanged
-            mounts.append(Mount(sock, sock))
+            mounts.append(Mount(str(sock_path), str(sock_path)))
             # Add socket's group to supplementary groups for access
-            sock_gid = sock_path.stat().st_gid
-            if sock_gid not in groups:
-                groups.append(sock_gid)
+            # Skip on macOS - GID from Docker Desktop VM isn't useful
+            if is_linux():
+                sock_gid = sock_path.stat().st_gid
+                if sock_gid not in groups:
+                    groups.append(sock_gid)
             return
 
     logger.warning("No container socket found, docker/podman won't work inside sandbox")
 
 
 def _add_clipboard_support(mounts: list[Mount]) -> None:
-    """Mount display sockets for clipboard access (Wayland or X11)."""
+    """Mount display sockets for clipboard access (Wayland or X11).
+
+    Only works on Linux where display server sockets can be mounted.
+    macOS/Windows don't have accessible display sockets.
+    """
+    # Clipboard via display sockets only works on Linux
+    if not is_linux():
+        if is_macos():
+            logger.warning(
+                "Clipboard not supported on macOS (no display server sockets available)"
+            )
+        return
+
     wayland_display = os.environ.get("WAYLAND_DISPLAY")
     xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
 
@@ -261,8 +280,8 @@ def _build_environment(
             if value := os.environ.get(key):
                 env[key] = value
 
-    # SSH agent
-    if config.ssh_agent and os.environ.get("SSH_AUTH_SOCK"):
+    # SSH agent (use platform-aware socket detection)
+    if config.ssh_agent and get_ssh_agent_socket():
         env["SSH_AUTH_SOCK"] = "/ssh-agent"
         # Override git SSH signing to use ssh-keygen with agent (not 1Password's op-ssh-sign)
         env["GIT_CONFIG_COUNT"] = "1"
@@ -280,7 +299,13 @@ def _build_environment(
 
 
 def _add_clipboard_environment(env: dict[str, str]) -> None:
-    """Forward display-related environment variables for clipboard tools."""
+    """Forward display-related environment variables for clipboard tools.
+
+    Only applies on Linux where display servers are available.
+    """
+    if not is_linux():
+        return
+
     # Wayland
     if wayland_display := os.environ.get("WAYLAND_DISPLAY"):
         env["WAYLAND_DISPLAY"] = wayland_display
