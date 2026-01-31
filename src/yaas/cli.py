@@ -18,6 +18,7 @@ from .constants import (
 )
 from .container import build_container_spec
 from .logging import get_logger, setup_logging
+from .platform import PlatformError, check_platform_support
 from .runtime import ContainerRuntime, get_runtime
 from .startup_ui import (
     is_interactive,
@@ -58,6 +59,16 @@ worktree_app = typer.Typer(
 )
 app.add_typer(worktree_app, name="worktree")
 console = Console()
+
+
+@app.callback()
+def main_callback() -> None:
+    """Check platform support before running any command."""
+    try:
+        check_platform_support()
+    except PlatformError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
 
 
 @app.command(
