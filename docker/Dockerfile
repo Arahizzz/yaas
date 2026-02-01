@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Essential development libraries
     libssl-dev zlib1g-dev libxml2-dev \
     # VCS and security
-    git openssh-client gnupg ca-certificates \
+    git git-lfs openssh-client gnupg ca-certificates \
     # Utilities
     curl wget unzip zip xz-utils zstd \
     sudo less vim nano \
@@ -22,7 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     locales icu-devtools \
     # Clipboard tools
     wl-clipboard xclip \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && git lfs install
 
 
 # Allow passwordless sudo for all users
