@@ -57,6 +57,9 @@ RUN chmod +x /entrypoint.sh
 RUN mkdir -p "$HOME/.local/bin" "$HOME/.local/share/mise" "$HOME/.cache" "$HOME/.config/mise" \
     && chmod -R 777 /home
 
+# Create /run/user for XDG_RUNTIME_DIR (entrypoint creates /run/user/$UID)
+RUN mkdir -p /run/user && chmod 1777 /run/user
+
 WORKDIR /workspace
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]
