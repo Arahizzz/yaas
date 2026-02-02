@@ -351,6 +351,37 @@ class TestBuildCloneSpec:
 
         assert spec.environment.get("SSH_AUTH_SOCK") == "/ssh-agent"
 
+    def test_ref_adds_branch_flag(self, mock_linux, project_dir, clean_env) -> None:
+        """Test that ref parameter adds --branch flag to git clone."""
+        config = Config()
+        clone_url = "https://github.com/user/repo.git"
+        clone_volume = "yaas-clone-abc123"
+        repo_name = "repo"
+
+        spec = build_clone_spec(config, clone_url, clone_volume, repo_name, ref="v2.0.0")
+
+        assert spec.command == [
+            "git",
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            "v2.0.0",
+            clone_url,
+            f"{CLONE_WORKSPACE}/{repo_name}",
+        ]
+
+    def test_ref_none_no_branch_flag(self, mock_linux, project_dir, clean_env) -> None:
+        """Test that ref=None does not add --branch flag."""
+        config = Config()
+        clone_url = "https://github.com/user/repo.git"
+        clone_volume = "yaas-clone-abc123"
+        repo_name = "repo"
+
+        spec = build_clone_spec(config, clone_url, clone_volume, repo_name, ref=None)
+
+        assert "--branch" not in spec.command
+
 
 class TestBuildCloneWorkSpec:
     """Tests for build_clone_work_spec function."""
