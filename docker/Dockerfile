@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core build tools
     build-essential make cmake pkg-config \
     autoconf automake libtool \
+    coreutils bc \
     # Essential development libraries
     libssl-dev zlib1g-dev libxml2-dev \
     # VCS and security
