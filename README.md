@@ -23,6 +23,7 @@ Container sandboxing for AI agents is nothing new, but most solutions have frict
 - **Resource limits** - Memory, CPU, and PID limits to prevent runaway processes
 - **Network isolation** - Optional `--no-network` for paranoid mode
 - **Git worktrees** - Parallel development support with `yaas worktree`
+- **Ephemeral clones** - Explore remote repos in isolated volumes with `--clone`
 
 ## Platform Support
 
@@ -115,6 +116,9 @@ yaas upgrade-tools
 
 # Reset installed tools and cache (tools reinstall on next run)
 yaas reset-volumes
+
+# Remove orphaned clone volumes
+yaas cleanup-clones
 ```
 
 ### Git Worktrees
@@ -133,6 +137,38 @@ yaas claude --worktree feature-x
 
 # Remove a worktree
 yaas worktree remove feature-x
+```
+
+### Ephemeral Clones
+
+The `--clone` flag clones a remote repository into an ephemeral volume for exploration. The volume is automatically removed when the container exits.
+
+```bash
+# Clone and explore with Claude
+yaas claude --clone https://github.com/user/repo
+
+# Clone and start a shell
+yaas shell --clone https://github.com/user/repo
+
+# Clone private repo via SSH
+yaas claude --clone git@github.com:org/private-repo --ssh-agent
+
+# Secure exploration: clone first, then run without network
+yaas claude --clone https://github.com/user/repo --no-network
+
+# Run a command in the cloned repo
+yaas run --clone https://github.com/user/repo -- make test
+```
+
+This is useful for:
+- Quickly exploring unfamiliar codebases with AI assistance
+- Running AI agents on repos you don't want to clone permanently
+- Exploring untrusted code without downloading it onto the host filesystem
+
+If a container exits unexpectedly and leaves orphaned volumes, clean them up with:
+
+```bash
+yaas cleanup-clones
 ```
 
 ## Configuration
