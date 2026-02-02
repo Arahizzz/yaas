@@ -89,6 +89,17 @@ yaas opencode
 yaas claude --no-yolo
 ```
 
+### Argument Pass-Through
+
+YAAS options must come first. Any unrecognized options are passed through to the underlying tool.
+
+```bash
+# YAAS options first, then tool options
+yaas claude --ssh-agent --git-config --print "Fix the bug"
+#           ^^^^^^^^^^^ ^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^^
+#           yaas options             passed to claude
+```
+
 ### General Commands
 
 ```bash
@@ -97,9 +108,6 @@ yaas run -- make build
 
 # Start an interactive shell
 yaas shell
-
-# Pass options before the command
-yaas claude --ssh-agent --git-config
 ```
 
 ### Utility Commands
@@ -146,6 +154,9 @@ The `--clone` flag clones a remote repository into an ephemeral volume for explo
 ```bash
 # Clone and explore with Claude
 yaas claude --clone https://github.com/user/repo
+
+# Clone a specific tag or branch
+yaas claude --clone https://github.com/user/repo --ref v2.0.0
 
 # Clone and start a shell
 yaas shell --clone https://github.com/user/repo
