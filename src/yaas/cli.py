@@ -91,6 +91,9 @@ def run(
     clone: str | None = typer.Option(
         None, "--clone", help="Clone git repo into ephemeral volume"
     ),
+    ref: str | None = typer.Option(
+        None, "--ref", "-r", help="Git ref (tag/branch) to checkout when cloning"
+    ),
     ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
     git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
     ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
@@ -133,7 +136,7 @@ def run(
     if cpus:
         config.resources.cpus = cpus
 
-    _run_container(config, project_dir, ctx.args, worktree_name, clone_url=clone)
+    _run_container(config, project_dir, ctx.args, worktree_name, clone_url=clone, clone_ref=ref)
 
 
 @app.command()
@@ -141,6 +144,9 @@ def shell(
     worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
     clone: str | None = typer.Option(
         None, "--clone", help="Clone git repo into ephemeral volume"
+    ),
+    ref: str | None = typer.Option(
+        None, "--ref", "-r", help="Git ref (tag/branch) to checkout when cloning"
     ),
     ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
     git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
@@ -180,7 +186,7 @@ def shell(
     if cpus:
         config.resources.cpus = cpus
 
-    _run_container(config, project_dir, ["bash"], worktree_name, clone_url=clone)
+    _run_container(config, project_dir, ["bash"], worktree_name, clone_url=clone, clone_ref=ref)
 
 
 def _create_tool_command(tool: str) -> None:
@@ -199,6 +205,9 @@ def _create_tool_command(tool: str) -> None:
         worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
         clone: str | None = typer.Option(
             None, "--clone", help="Clone git repo into ephemeral volume"
+        ),
+        ref: str | None = typer.Option(
+            None, "--ref", "-r", help="Git ref (tag/branch) to checkout when cloning"
         ),
         ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
         git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
@@ -247,7 +256,7 @@ def _create_tool_command(tool: str) -> None:
             command.extend(TOOL_YOLO_FLAGS.get(tool, []))
         command.extend(ctx.args)
 
-        _run_container(config, project_dir, command, worktree_name, clone_url=clone)
+        _run_container(config, project_dir, command, worktree_name, clone_url=clone, clone_ref=ref)
 
     # Update docstring
     tool_command.__doc__ = (
@@ -414,8 +423,17 @@ def _run_clone_workflow(
     runtime: ContainerRuntime,
     clone_url: str,
     command: list[str],
+    ref: str | None = None,
 ) -> None:
-    """Handle the complete clone workflow: create volume, clone, run, cleanup."""
+    """Handle the complete clone workflow: create volume, clone, run, cleanup.
+
+    Args:
+        config: Configuration object
+        runtime: Container runtime to use
+        clone_url: Git repository URL to clone
+        command: Command to run in the cloned repository
+        ref: Optional git ref (tag or branch) to checkout
+    """
     repo_name = extract_repo_name(clone_url)
     clone_volume = f"{CLONE_VOLUME_PREFIX}{uuid.uuid4().hex[:12]}"
 
@@ -427,8 +445,11 @@ def _run_clone_workflow(
 
     try:
         # Clone repository
-        print_step(f"Cloning {repo_name}")
-        clone_spec = build_clone_spec(config, clone_url, clone_volume, repo_name)
+        step_msg = f"Cloning {repo_name}"
+        if ref:
+            step_msg += f" @ {ref}"
+        print_step(step_msg)
+        clone_spec = build_clone_spec(config, clone_url, clone_volume, repo_name, ref=ref)
         if runtime.run(clone_spec) != 0:
             console.print("[red]Failed to clone repository[/]")
             raise typer.Exit(1)
@@ -466,6 +487,7 @@ def _run_container(
     command: list[str],
     worktree_name: str | None = None,
     clone_url: str | None = None,
+    clone_ref: str | None = None,
 ) -> None:
     """Build spec and run container."""
     runtime = get_runtime(config.runtime)
@@ -480,7 +502,7 @@ def _run_container(
 
     # Clone mode: delegate to separate workflow
     if clone_url:
-        _run_clone_workflow(config, runtime, clone_url, command)
+        _run_clone_workflow(config, runtime, clone_url, command, ref=clone_ref)
         return  # _run_clone_workflow raises typer.Exit
 
     # Normal mode

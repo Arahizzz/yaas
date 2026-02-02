@@ -75,12 +75,20 @@ def build_clone_spec(
     clone_url: str,
     clone_volume: str,
     repo_name: str,
+    ref: str | None = None,
 ) -> ContainerSpec:
     """Build container spec for cloning a git repository.
 
     This creates a minimal container that runs git clone into the ephemeral volume.
     Always has network access (even if config.no_network is True) since it needs
     to fetch from remote.
+
+    Args:
+        config: Configuration object
+        clone_url: Git repository URL to clone
+        clone_volume: Name of the volume to clone into
+        repo_name: Name of the repository (used for subdirectory)
+        ref: Optional git ref (tag or branch) to checkout via --branch
     """
     uid, gid = get_uid_gid()
     sandbox_home = "/home"
@@ -114,9 +122,15 @@ def build_clone_spec(
     container_user = f"{uid}:{gid}"
     clone_path = f"{CLONE_WORKSPACE}/{repo_name}"
 
+    # Build git clone command
+    clone_cmd = ["git", "clone", "--depth", "1"]
+    if ref:
+        clone_cmd.extend(["--branch", ref])
+    clone_cmd.extend([clone_url, clone_path])
+
     return ContainerSpec(
         image=RUNTIME_IMAGE,
-        command=["git", "clone", "--depth", "1", clone_url, clone_path],
+        command=clone_cmd,
         working_dir=CLONE_WORKSPACE,
         user=container_user,
         environment=environment,
