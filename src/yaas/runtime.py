@@ -8,7 +8,10 @@ import subprocess
 from dataclasses import dataclass
 from typing import Protocol
 
+from .logging import get_logger
 from .platform import get_container_socket_paths, is_linux
+
+logger = get_logger()
 
 
 def _can_access_docker_socket() -> bool:
@@ -31,7 +34,13 @@ class Mount:
 
 def _format_mount(m: Mount) -> str:
     """Format mount for --mount flag (shared by Podman and Docker)."""
-    parts = [f"type={m.type}", f"source={m.source}", f"target={m.target}"]
+    parts = [f"type={m.type}"]
+
+    # tmpfs mounts don't have a source
+    if m.type != "tmpfs":
+        parts.append(f"source={m.source}")
+
+    parts.append(f"target={m.target}")
 
     if m.read_only:
         parts.append("readonly")
@@ -81,6 +90,14 @@ class ContainerRuntime(Protocol):
         """Run container, return exit code."""
         ...
 
+    def create_volume(self, name: str) -> bool:
+        """Create a named volume. Returns True on success."""
+        ...
+
+    def remove_volume(self, name: str) -> bool:
+        """Remove a named volume. Returns True on success."""
+        ...
+
 
 class PodmanRuntime:
     """Podman implementation using CLI subprocess.
@@ -105,6 +122,28 @@ class PodmanRuntime:
         cmd = self._build_command(spec)
         result = subprocess.run(cmd)
         return result.returncode
+
+    def create_volume(self, name: str) -> bool:
+        """Create a named volume. Returns True on success."""
+        result = subprocess.run(
+            [*self.command_prefix, "volume", "create", name],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.debug(f"Failed to create volume {name}: {result.stderr}")
+        return result.returncode == 0
+
+    def remove_volume(self, name: str) -> bool:
+        """Remove a named volume. Returns True on success."""
+        result = subprocess.run(
+            [*self.command_prefix, "volume", "rm", "-f", name],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.debug(f"Failed to remove volume {name}: {result.stderr}")
+        return result.returncode == 0
 
     def _build_command(self, spec: ContainerSpec) -> list[str]:
         cmd = [*self.command_prefix, "run", "--rm"]
@@ -192,6 +231,28 @@ class DockerRuntime:
         cmd = self._build_command(spec)
         result = subprocess.run(cmd)
         return result.returncode
+
+    def create_volume(self, name: str) -> bool:
+        """Create a named volume. Returns True on success."""
+        result = subprocess.run(
+            [*self.command_prefix, "volume", "create", name],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.debug(f"Failed to create volume {name}: {result.stderr}")
+        return result.returncode == 0
+
+    def remove_volume(self, name: str) -> bool:
+        """Remove a named volume. Returns True on success."""
+        result = subprocess.run(
+            [*self.command_prefix, "volume", "rm", "-f", name],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.debug(f"Failed to remove volume {name}: {result.stderr}")
+        return result.returncode == 0
 
     def _build_command(self, spec: ContainerSpec) -> list[str]:
         cmd = [*self.command_prefix, "run", "--rm"]

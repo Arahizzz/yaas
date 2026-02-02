@@ -20,6 +20,10 @@ RUNTIME_IMAGE = os.getenv("YAAS_RUNTIME_IMAGE", "ghcr.io/arahizzz/yaas/runtime:0
 MISE_DATA_VOLUME = "yaas-data"  # ~/.local/share/mise (tools)
 CACHE_VOLUME = "yaas-cache"  # ~/.cache (general cache)
 
+# Clone feature constants
+CLONE_WORKSPACE = "/home/workspace"
+CLONE_VOLUME_PREFIX = "yaas-clone-"
+
 # Mise config path (auto-created if missing)
 MISE_CONFIG_PATH = CONFIG_DIR / "mise.toml"
 

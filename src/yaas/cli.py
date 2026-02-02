@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import uuid
 from pathlib import Path
 
 import typer
@@ -11,12 +12,18 @@ from rich.console import Console
 from .config import Config, load_config
 from .constants import (
     CACHE_VOLUME,
+    CLONE_VOLUME_PREFIX,
     MISE_DATA_VOLUME,
     RUNTIME_IMAGE,
     TOOL_SHORTCUTS,
     TOOL_YOLO_FLAGS,
 )
-from .container import build_container_spec
+from .container import (
+    build_clone_spec,
+    build_clone_work_spec,
+    build_container_spec,
+    extract_repo_name,
+)
 from .logging import get_logger, setup_logging
 from .platform import PlatformError, check_platform_support
 from .runtime import ContainerRuntime, get_runtime
@@ -81,6 +88,9 @@ def main_callback() -> None:
 def run(
     ctx: typer.Context,
     worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
+    clone: str | None = typer.Option(
+        None, "--clone", help="Clone git repo into ephemeral volume"
+    ),
     ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
     git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
     ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
@@ -97,6 +107,10 @@ def run(
     """Run a command in the sandbox."""
     if not ctx.args:
         raise typer.BadParameter("Missing command to run")
+
+    # Validate mutual exclusion
+    if clone and worktree:
+        raise typer.BadParameter("--clone and --worktree are mutually exclusive")
 
     project_dir, worktree_name = _resolve_worktree(worktree)
     config = load_config(project_dir)
@@ -119,12 +133,15 @@ def run(
     if cpus:
         config.resources.cpus = cpus
 
-    _run_container(config, project_dir, ctx.args, worktree_name)
+    _run_container(config, project_dir, ctx.args, worktree_name, clone_url=clone)
 
 
 @app.command()
 def shell(
     worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
+    clone: str | None = typer.Option(
+        None, "--clone", help="Clone git repo into ephemeral volume"
+    ),
     ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
     git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
     ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
@@ -139,6 +156,10 @@ def shell(
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
 ) -> None:
     """Start interactive shell in sandbox."""
+    # Validate mutual exclusion
+    if clone and worktree:
+        raise typer.BadParameter("--clone and --worktree are mutually exclusive")
+
     project_dir, worktree_name = _resolve_worktree(worktree)
     config = load_config(project_dir)
 
@@ -159,7 +180,7 @@ def shell(
     if cpus:
         config.resources.cpus = cpus
 
-    _run_container(config, project_dir, ["bash"], worktree_name)
+    _run_container(config, project_dir, ["bash"], worktree_name, clone_url=clone)
 
 
 def _create_tool_command(tool: str) -> None:
@@ -176,6 +197,9 @@ def _create_tool_command(tool: str) -> None:
     def tool_command(
         ctx: typer.Context,
         worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
+        clone: str | None = typer.Option(
+            None, "--clone", help="Clone git repo into ephemeral volume"
+        ),
         ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
         git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
         ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
@@ -193,6 +217,10 @@ def _create_tool_command(tool: str) -> None:
         cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
     ) -> None:
         """Run AI tool in sandbox with YOLO mode (auto-confirm)."""
+        # Validate mutual exclusion
+        if clone and worktree:
+            raise typer.BadParameter("--clone and --worktree are mutually exclusive")
+
         project_dir, worktree_name = _resolve_worktree(worktree)
         config = load_config(project_dir)
 
@@ -219,7 +247,7 @@ def _create_tool_command(tool: str) -> None:
             command.extend(TOOL_YOLO_FLAGS.get(tool, []))
         command.extend(ctx.args)
 
-        _run_container(config, project_dir, command, worktree_name)
+        _run_container(config, project_dir, command, worktree_name, clone_url=clone)
 
     # Update docstring
     tool_command.__doc__ = (
@@ -296,6 +324,54 @@ def reset_volumes(
     console.print("[green]Reset complete. Tools will be reinstalled on next run.[/]")
 
 
+@app.command(name="cleanup-clones")
+def cleanup_clones(
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Remove orphaned clone volumes from interrupted sessions."""
+    runtime = get_runtime()
+
+    # List all volumes and filter for clone volumes
+    result = subprocess.run(
+        [*runtime.command_prefix, "volume", "ls", "--format", "{{.Name}}"],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        console.print(f"[red]Failed to list volumes: {result.stderr}[/]")
+        raise typer.Exit(1)
+
+    clone_volumes = [
+        name.strip()
+        for name in result.stdout.splitlines()
+        if name.strip().startswith(CLONE_VOLUME_PREFIX)
+    ]
+
+    if not clone_volumes:
+        console.print("[dim]No orphaned clone volumes found.[/]")
+        return
+
+    console.print(f"[yellow]Found {len(clone_volumes)} orphaned clone volume(s):[/]")
+    for vol in clone_volumes:
+        console.print(f"  - {vol}")
+
+    if not force:
+        confirm = typer.confirm("Remove these volumes?")
+        if not confirm:
+            raise typer.Abort()
+
+    removed = 0
+    for volume in clone_volumes:
+        if runtime.remove_volume(volume):
+            console.print(f"[green]Removed: {volume}[/]")
+            removed += 1
+        else:
+            console.print(f"[red]Failed to remove: {volume}[/]")
+
+    console.print(f"[green]Cleaned up {removed}/{len(clone_volumes)} volumes.[/]")
+
+
 @app.command(name="pull-image")
 def pull_image() -> None:
     """Pull the latest container image."""
@@ -329,9 +405,59 @@ def _pull_image(runtime: ContainerRuntime) -> bool:
 def _upgrade_tools(config: Config, project_dir: Path, runtime: ContainerRuntime) -> bool:
     """Run mise upgrade in container. Returns True on success."""
     cmd = ["mise", "upgrade", "--yes"]
-    # TTY enables progress bars, no stdin needed for upgrade
     spec = build_container_spec(config, project_dir, cmd, tty=is_interactive(), stdin_open=False)
     return runtime.run(spec) == 0
+
+
+def _run_clone_workflow(
+    config: Config,
+    runtime: ContainerRuntime,
+    clone_url: str,
+    command: list[str],
+) -> None:
+    """Handle the complete clone workflow: create volume, clone, run, cleanup."""
+    repo_name = extract_repo_name(clone_url)
+    clone_volume = f"{CLONE_VOLUME_PREFIX}{uuid.uuid4().hex[:12]}"
+
+    # Create ephemeral volume
+    print_step("Creating ephemeral volume")
+    if not runtime.create_volume(clone_volume):
+        console.print("[red]Failed to create ephemeral volume[/]")
+        raise typer.Exit(1)
+
+    try:
+        # Clone repository
+        print_step(f"Cloning {repo_name}")
+        clone_spec = build_clone_spec(config, clone_url, clone_volume, repo_name)
+        if runtime.run(clone_spec) != 0:
+            console.print("[red]Failed to clone repository[/]")
+            raise typer.Exit(1)
+
+        # Upgrade tools if enabled
+        if config.auto_upgrade_tools:
+            print_step("Upgrading tools")
+            cmd = ["mise", "upgrade", "--yes"]
+            spec = build_clone_work_spec(
+                config, clone_volume, repo_name, cmd, tty=is_interactive(), stdin_open=False
+            )
+            runtime.run(spec)
+
+        # Build and run work container
+        spec = build_clone_work_spec(config, clone_volume, repo_name, command, tty=stdin_is_tty())
+
+        print_step("Launching sandbox")
+        print_startup_footer()
+
+        exit_code = runtime.run(spec)
+    finally:
+        # Always clean up the ephemeral volume
+        print_step("Removing ephemeral volume")
+        if not runtime.remove_volume(clone_volume):
+            logger.warning(f"Failed to remove ephemeral volume: {clone_volume}")
+            console.print(f"[yellow]Warning: Failed to remove volume {clone_volume}[/]")
+            console.print("[dim]Run 'podman/docker volume rm' to clean up manually[/]")
+
+    raise typer.Exit(exit_code)
 
 
 def _run_container(
@@ -339,6 +465,7 @@ def _run_container(
     project_dir: Path,
     command: list[str],
     worktree_name: str | None = None,
+    clone_url: str | None = None,
 ) -> None:
     """Build spec and run container."""
     runtime = get_runtime(config.runtime)
@@ -351,7 +478,12 @@ def _run_container(
         print_step("Pulling image")
         _pull_image(runtime)
 
-    # Upgrade tools if enabled
+    # Clone mode: delegate to separate workflow
+    if clone_url:
+        _run_clone_workflow(config, runtime, clone_url, command)
+        return  # _run_clone_workflow raises typer.Exit
+
+    # Normal mode
     if config.auto_upgrade_tools:
         print_step("Upgrading tools")
         _upgrade_tools(config, project_dir, runtime)

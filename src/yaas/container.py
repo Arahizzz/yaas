@@ -11,6 +11,7 @@ from .config import Config
 from .constants import (
     API_KEYS,
     CACHE_VOLUME,
+    CLONE_WORKSPACE,
     MISE_CONFIG_PATH,
     MISE_DATA_VOLUME,
     RUNTIME_IMAGE,
@@ -26,6 +27,109 @@ from .platform import (
 from .runtime import ContainerSpec, Mount
 
 logger = get_logger()
+
+
+def extract_repo_name(url: str) -> str:
+    """Extract repository name from a git URL.
+
+    Handles both HTTPS and SSH URLs:
+    - https://github.com/user/repo.git -> repo
+    - git@github.com:user/repo.git -> repo
+    - https://github.com/user/repo -> repo
+
+    Raises:
+        ValueError: If URL is empty or repo name cannot be extracted
+    """
+    if not url or not url.strip():
+        raise ValueError("Empty repository URL")
+
+    # Strip whitespace and trailing slashes
+    url = url.strip().rstrip("/")
+
+    # Remove query parameters and fragments
+    for sep in ("?", "#"):
+        if sep in url:
+            url = url.split(sep, 1)[0]
+
+    # Remove trailing .git if present
+    if url.endswith(".git"):
+        url = url[:-4]
+
+    # Extract the last path component
+    if "/" in url:
+        name = url.rsplit("/", 1)[-1]
+    elif ":" in url:
+        # SSH format: git@github.com:user/repo
+        name = url.rsplit(":", 1)[-1].rsplit("/", 1)[-1]
+    else:
+        name = url
+
+    if not name:
+        raise ValueError(f"Could not extract repository name from URL: {url}")
+
+    return name
+
+
+def build_clone_spec(
+    config: Config,
+    clone_url: str,
+    clone_volume: str,
+    repo_name: str,
+) -> ContainerSpec:
+    """Build container spec for cloning a git repository.
+
+    This creates a minimal container that runs git clone into the ephemeral volume.
+    Always has network access (even if config.no_network is True) since it needs
+    to fetch from remote.
+    """
+    uid, gid = get_uid_gid()
+    sandbox_home = "/home"
+
+    mounts: list[Mount] = []
+
+    # UID/GID passthrough on Linux
+    if is_linux():
+        mounts.append(Mount("/etc/passwd", "/etc/passwd", read_only=True))
+        mounts.append(Mount("/etc/group", "/etc/group", read_only=True))
+
+    # Mount the clone volume at workspace
+    mounts.append(Mount(clone_volume, CLONE_WORKSPACE, type="volume"))
+
+    # SSH agent for private repos
+    if config.ssh_agent:
+        _add_ssh_agent(mounts)
+
+    environment: dict[str, str] = {
+        "HOME": sandbox_home,
+    }
+
+    # SSH agent environment
+    if config.ssh_agent and get_ssh_agent_socket():
+        environment["SSH_AUTH_SOCK"] = "/ssh-agent"
+
+    # Forward TERM
+    if term := os.environ.get("TERM"):
+        environment["TERM"] = term
+
+    container_user = f"{uid}:{gid}"
+    clone_path = f"{CLONE_WORKSPACE}/{repo_name}"
+
+    return ContainerSpec(
+        image=RUNTIME_IMAGE,
+        command=["git", "clone", "--depth", "1", clone_url, clone_path],
+        working_dir=CLONE_WORKSPACE,
+        user=container_user,
+        environment=environment,
+        mounts=mounts,
+        network_mode=None,  # Always need network for cloning
+        tty=False,
+        stdin_open=False,
+        # Resource limits from config
+        memory=config.resources.memory,
+        memory_swap=config.resources.memory_swap,
+        cpus=config.resources.cpus,
+        pids_limit=config.resources.pids_limit,
+    )
 
 
 def build_container_spec(
@@ -77,6 +181,62 @@ def build_container_spec(
     )
 
 
+def build_clone_work_spec(
+    config: Config,
+    clone_volume: str,
+    repo_name: str,
+    command: list[str],
+    *,
+    tty: bool = True,
+    stdin_open: bool = True,
+) -> ContainerSpec:
+    """Build container spec for working in a cloned repository.
+
+    This is used for the work container in clone mode, after the repo has been
+    cloned into the ephemeral volume.
+    """
+    uid, gid = get_uid_gid()
+    home = Path.home()
+    sandbox_home = "/home"
+    working_dir = f"{CLONE_WORKSPACE}/{repo_name}"
+
+    mounts: list[Mount] = []
+    groups: list[int] = []
+
+    # UID/GID passthrough on Linux
+    if is_linux():
+        mounts.append(Mount("/etc/passwd", "/etc/passwd", read_only=True))
+        mounts.append(Mount("/etc/group", "/etc/group", read_only=True))
+
+    # Mount clone volume at /workspace
+    mounts.append(Mount(clone_volume, CLONE_WORKSPACE, type="volume"))
+
+    # Add standard mounts (config, SSH, clipboard, mise, etc.)
+    _add_optional_mounts(config, mounts, groups, home, sandbox_home)
+
+    # Build environment (use working_dir as project path for mise trust)
+    environment = _build_environment(config, Path(working_dir), sandbox_home)
+
+    container_user = f"{uid}:{gid}"
+
+    return ContainerSpec(
+        image=RUNTIME_IMAGE,
+        command=command,
+        working_dir=working_dir,
+        user=container_user,
+        environment=environment,
+        mounts=mounts,
+        network_mode="none" if config.no_network else None,
+        tty=tty,
+        stdin_open=stdin_open,
+        groups=groups or None,
+        memory=config.resources.memory,
+        memory_swap=config.resources.memory_swap,
+        cpus=config.resources.cpus,
+        pids_limit=config.resources.pids_limit,
+    )
+
+
 def _build_mounts(
     config: Config,
     project_dir: Path,
@@ -102,7 +262,24 @@ def _build_mounts(
         )
     )
 
-    # Direct config mounts (enabled by UID passthrough!)
+    # Add optional mounts
+    _add_optional_mounts(config, mounts, groups, home, sandbox_home)
+
+    # User-defined mounts
+    for mount_spec in config.mounts:
+        mounts.append(_parse_mount_spec(mount_spec, project_dir))
+
+    return mounts, groups
+
+
+def _add_optional_mounts(
+    config: Config,
+    mounts: list[Mount],
+    groups: list[int],
+    home: Path,
+    sandbox_home: str,
+) -> None:
+    """Add optional mounts based on config (git, AI, SSH, clipboard, mise)."""
     if config.git_config:
         _add_config_mounts(mounts, home, sandbox_home, [".gitconfig", ".config/git"])
 
@@ -121,26 +298,16 @@ def _build_mounts(
             ],
         )
 
-    # SSH agent
     if config.ssh_agent:
         _add_ssh_agent(mounts)
 
-    # Container socket (docker/podman inside sandbox)
     if config.container_socket:
         _add_container_socket(mounts, groups)
 
-    # Clipboard support (for image pasting)
     if config.clipboard:
         _add_clipboard_support(mounts)
 
-    # Mise tool management support
     _add_mise_support(mounts)
-
-    # User-defined mounts
-    for mount_spec in config.mounts:
-        mounts.append(_parse_mount_spec(mount_spec, project_dir))
-
-    return mounts, groups
 
 
 def _add_ssh_agent(mounts: list[Mount]) -> None:
