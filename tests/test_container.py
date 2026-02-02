@@ -5,9 +5,17 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from yaas.config import Config
-from yaas.constants import RUNTIME_IMAGE
-from yaas.container import _parse_mount_spec, build_container_spec
+from yaas.constants import CLONE_WORKSPACE, RUNTIME_IMAGE
+from yaas.container import (
+    _parse_mount_spec,
+    build_clone_spec,
+    build_clone_work_spec,
+    build_container_spec,
+    extract_repo_name,
+)
 
 
 class TestBuildContainerSpec:
@@ -226,3 +234,170 @@ class TestClipboardSupport:
         # No display sockets should be mounted
         mount_targets = [m.target for m in spec.mounts]
         assert str(runtime_dir) not in mount_targets
+
+
+class TestExtractRepoName:
+    """Tests for extract_repo_name function."""
+
+    def test_https_with_git_suffix(self) -> None:
+        """Test extracting repo name from HTTPS URL with .git suffix."""
+        name = extract_repo_name("https://github.com/user/repo.git")
+        assert name == "repo"
+
+    def test_https_without_git_suffix(self) -> None:
+        """Test extracting repo name from HTTPS URL without .git suffix."""
+        name = extract_repo_name("https://github.com/user/repo")
+        assert name == "repo"
+
+    def test_ssh_format(self) -> None:
+        """Test extracting repo name from SSH URL."""
+        name = extract_repo_name("git@github.com:user/repo.git")
+        assert name == "repo"
+
+    def test_ssh_without_git_suffix(self) -> None:
+        """Test extracting repo name from SSH URL without .git suffix."""
+        name = extract_repo_name("git@github.com:user/repo")
+        assert name == "repo"
+
+    def test_nested_path(self) -> None:
+        """Test extracting repo name from nested path URL."""
+        name = extract_repo_name("https://gitlab.com/group/subgroup/repo.git")
+        assert name == "repo"
+
+    def test_trailing_slash(self) -> None:
+        """Test extracting repo name from URL with trailing slash."""
+        name = extract_repo_name("https://github.com/user/repo/")
+        assert name == "repo"
+
+    def test_query_params_stripped(self) -> None:
+        """Test query parameters are stripped from URL."""
+        name = extract_repo_name("https://github.com/user/repo?ref=main")
+        assert name == "repo"
+
+    def test_fragment_stripped(self) -> None:
+        """Test URL fragments are stripped."""
+        name = extract_repo_name("https://github.com/user/repo#readme")
+        assert name == "repo"
+
+    def test_whitespace_stripped(self) -> None:
+        """Test whitespace is stripped from URL."""
+        name = extract_repo_name("  https://github.com/user/repo  ")
+        assert name == "repo"
+
+    def test_empty_url_raises(self) -> None:
+        """Test empty URL raises ValueError."""
+        with pytest.raises(ValueError, match="Empty repository URL"):
+            extract_repo_name("")
+
+    def test_whitespace_only_raises(self) -> None:
+        """Test whitespace-only URL raises ValueError."""
+        with pytest.raises(ValueError, match="Empty repository URL"):
+            extract_repo_name("   ")
+
+
+class TestBuildCloneSpec:
+    """Tests for build_clone_spec function."""
+
+    def test_basic(self, mock_linux, project_dir, clean_env) -> None:
+        """Test basic clone spec building."""
+        config = Config()
+        clone_url = "https://github.com/user/repo.git"
+        clone_volume = "yaas-clone-abc123"
+        repo_name = "repo"
+
+        spec = build_clone_spec(config, clone_url, clone_volume, repo_name)
+
+        assert spec.image == RUNTIME_IMAGE
+        assert spec.command == [
+            "git",
+            "clone",
+            "--depth",
+            "1",
+            clone_url,
+            f"{CLONE_WORKSPACE}/{repo_name}",
+        ]
+        assert spec.working_dir == CLONE_WORKSPACE
+        assert spec.network_mode is None  # Always needs network
+        assert spec.tty is False
+        assert spec.stdin_open is False
+
+    def test_clone_volume_mounted(self, mock_linux, project_dir, clean_env) -> None:
+        """Test that clone volume is mounted at workspace."""
+        config = Config()
+        clone_volume = "yaas-clone-abc123"
+
+        spec = build_clone_spec(config, "https://github.com/user/repo.git", clone_volume, "repo")
+
+        # Find the clone volume mount
+        volume_mount = next(
+            (m for m in spec.mounts if m.source == clone_volume and m.type == "volume"), None
+        )
+        assert volume_mount is not None
+        assert volume_mount.target == CLONE_WORKSPACE
+
+    def test_ssh_agent_forwarded(self, mock_linux, project_dir, clean_env) -> None:
+        """Test SSH agent is forwarded for private repos."""
+        config = Config()
+        config.ssh_agent = True
+
+        # Mock SSH agent socket
+        ssh_socket = project_dir / "ssh-agent"
+        ssh_socket.touch()
+
+        with patch("yaas.container.get_ssh_agent_socket", return_value=ssh_socket):
+            spec = build_clone_spec(
+                config, "git@github.com:user/repo.git", "yaas-clone-abc123", "repo"
+            )
+
+        assert spec.environment.get("SSH_AUTH_SOCK") == "/ssh-agent"
+
+
+class TestBuildCloneWorkSpec:
+    """Tests for build_clone_work_spec function."""
+
+    def test_working_dir(self, mock_linux, project_dir, clean_env) -> None:
+        """Test working directory is set to repo in clone mode."""
+        config = Config()
+        clone_volume = "yaas-clone-abc123"
+        repo_name = "myrepo"
+
+        spec = build_clone_work_spec(config, clone_volume, repo_name, ["bash"])
+
+        assert spec.working_dir == f"{CLONE_WORKSPACE}/{repo_name}"
+
+    def test_clone_volume_mounted(self, mock_linux, project_dir, clean_env) -> None:
+        """Test clone volume is mounted at /workspace."""
+        config = Config()
+        clone_volume = "yaas-clone-abc123"
+        repo_name = "myrepo"
+
+        spec = build_clone_work_spec(config, clone_volume, repo_name, ["bash"])
+
+        # Clone volume should be mounted
+        volume_mount = next(
+            (m for m in spec.mounts if m.source == clone_volume and m.type == "volume"), None
+        )
+        assert volume_mount is not None
+        assert volume_mount.target == CLONE_WORKSPACE
+
+    def test_no_network_respected(self, mock_linux, project_dir, clean_env) -> None:
+        """Test --no-network is respected in clone work container."""
+        config = Config()
+        config.no_network = True
+
+        spec = build_clone_work_spec(config, "yaas-clone-abc123", "repo", ["bash"])
+
+        assert spec.network_mode == "none"
+
+    def test_ssh_agent_forwarded(self, mock_linux, project_dir, clean_env) -> None:
+        """Test SSH agent is forwarded in work container."""
+        config = Config()
+        config.ssh_agent = True
+
+        ssh_socket = project_dir / "ssh-agent"
+        ssh_socket.touch()
+
+        with patch("yaas.container.get_ssh_agent_socket", return_value=ssh_socket):
+            spec = build_clone_work_spec(config, "yaas-clone-abc123", "repo", ["bash"])
+
+        assert spec.environment.get("SSH_AUTH_SOCK") == "/ssh-agent"

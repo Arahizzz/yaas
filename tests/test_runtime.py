@@ -1,7 +1,8 @@
 """Tests for container runtime."""
 
+import subprocess
 from contextlib import ExitStack
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from tests.helpers import make_spec, mock_docker_socket, mock_which
 from yaas.runtime import DockerRuntime, Mount, PodmanRuntime
@@ -94,6 +95,59 @@ class TestPodmanRuntime:
             runtime = PodmanRuntime()
             assert runtime.is_available() is False
 
+    def test_create_volume_success(self) -> None:
+        """Test create_volume returns True on success."""
+        with ExitStack() as stack:
+            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            mock_run = stack.enter_context(patch("subprocess.run"))
+            mock_run.return_value = MagicMock(returncode=0)
+
+            runtime = PodmanRuntime()
+            result = runtime.create_volume("test-volume")
+
+            assert result is True
+            mock_run.assert_called_once()
+            args = mock_run.call_args[0][0]
+            assert args == ["podman", "volume", "create", "test-volume"]
+
+    def test_create_volume_failure(self) -> None:
+        """Test create_volume returns False on failure."""
+        with ExitStack() as stack:
+            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            mock_run = stack.enter_context(patch("subprocess.run"))
+            mock_run.return_value = MagicMock(returncode=1, stderr="error message")
+
+            runtime = PodmanRuntime()
+            result = runtime.create_volume("test-volume")
+
+            assert result is False
+
+    def test_remove_volume_success(self) -> None:
+        """Test remove_volume returns True on success."""
+        with ExitStack() as stack:
+            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            mock_run = stack.enter_context(patch("subprocess.run"))
+            mock_run.return_value = MagicMock(returncode=0)
+
+            runtime = PodmanRuntime()
+            result = runtime.remove_volume("test-volume")
+
+            assert result is True
+            args = mock_run.call_args[0][0]
+            assert args == ["podman", "volume", "rm", "-f", "test-volume"]
+
+    def test_remove_volume_failure(self) -> None:
+        """Test remove_volume returns False on failure."""
+        with ExitStack() as stack:
+            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            mock_run = stack.enter_context(patch("subprocess.run"))
+            mock_run.return_value = MagicMock(returncode=1, stderr="error message")
+
+            runtime = PodmanRuntime()
+            result = runtime.remove_volume("test-volume")
+
+            assert result is False
+
 
 # ============================================================
 # DockerRuntime tests
@@ -173,3 +227,46 @@ class TestDockerRuntime:
         assert cmd[0] == "sudo"
         assert cmd[1] == "docker"
         assert "run" in cmd
+
+    def test_create_volume_success(self) -> None:
+        """Test create_volume returns True on success."""
+        with ExitStack() as stack:
+            stack.enter_context(mock_docker_socket(accessible=True))
+            mock_run = stack.enter_context(patch("subprocess.run"))
+            mock_run.return_value = MagicMock(returncode=0)
+
+            runtime = DockerRuntime()
+            result = runtime.create_volume("test-volume")
+
+            assert result is True
+            args = mock_run.call_args[0][0]
+            assert args == ["docker", "volume", "create", "test-volume"]
+
+    def test_create_volume_with_sudo(self) -> None:
+        """Test create_volume uses sudo when needed."""
+        with ExitStack() as stack:
+            stack.enter_context(mock_docker_socket(accessible=False))
+            stack.enter_context(mock_which({"docker": "/usr/bin/docker", "sudo": "/usr/bin/sudo"}))
+            mock_run = stack.enter_context(patch("subprocess.run"))
+            mock_run.return_value = MagicMock(returncode=0)
+
+            runtime = DockerRuntime()
+            result = runtime.create_volume("test-volume")
+
+            assert result is True
+            args = mock_run.call_args[0][0]
+            assert args == ["sudo", "docker", "volume", "create", "test-volume"]
+
+    def test_remove_volume_success(self) -> None:
+        """Test remove_volume returns True on success."""
+        with ExitStack() as stack:
+            stack.enter_context(mock_docker_socket(accessible=True))
+            mock_run = stack.enter_context(patch("subprocess.run"))
+            mock_run.return_value = MagicMock(returncode=0)
+
+            runtime = DockerRuntime()
+            result = runtime.remove_volume("test-volume")
+
+            assert result is True
+            args = mock_run.call_args[0][0]
+            assert args == ["docker", "volume", "rm", "-f", "test-volume"]
