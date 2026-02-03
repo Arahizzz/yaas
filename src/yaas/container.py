@@ -313,6 +313,10 @@ def _add_optional_mounts(
                 ".local/share/opencode",
             ],
         )
+        # Mount IDE lock directory as read-only to prevent container from deleting lock files
+        ide_dir = home / ".claude" / "ide"
+        if ide_dir.exists():
+            mounts.append(Mount(str(ide_dir), f"{sandbox_home}/.claude/ide", read_only=True))
 
     if config.ssh_agent:
         _add_ssh_agent(mounts)
