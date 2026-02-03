@@ -52,7 +52,7 @@ class TestBuildContainerSpec:
     def test_network_isolation(self, mock_linux, project_dir, clean_env) -> None:
         """Test network isolation setting."""
         config = Config()
-        config.no_network = True
+        config.network_mode = "none"
 
         spec = build_container_spec(config, project_dir, ["bash"])
 
@@ -411,10 +411,10 @@ class TestBuildCloneWorkSpec:
         assert volume_mount is not None
         assert volume_mount.target == CLONE_WORKSPACE
 
-    def test_no_network_respected(self, mock_linux, project_dir, clean_env) -> None:
-        """Test --no-network is respected in clone work container."""
+    def test_network_mode_respected(self, mock_linux, project_dir, clean_env) -> None:
+        """Test network_mode is respected in clone work container."""
         config = Config()
-        config.no_network = True
+        config.network_mode = "none"
 
         spec = build_clone_work_spec(config, "yaas-clone-abc123", "repo", ["bash"])
 

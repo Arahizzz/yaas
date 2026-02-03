@@ -103,7 +103,9 @@ def run(
     clipboard: bool = typer.Option(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
-    no_network: bool = typer.Option(False, "--no-network", help="Disable network"),
+    network: str | None = typer.Option(
+        None, "--network", help="Network mode: host, bridge, none"
+    ),
     memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
 ) -> None:
@@ -129,8 +131,8 @@ def run(
         config.container_socket = True
     if clipboard:
         config.clipboard = True
-    if no_network:
-        config.no_network = True
+    if network:
+        config.network_mode = network
     if memory:
         config.resources.memory = memory
     if cpus:
@@ -157,7 +159,9 @@ def shell(
     clipboard: bool = typer.Option(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
-    no_network: bool = typer.Option(False, "--no-network", help="Disable network"),
+    network: str | None = typer.Option(
+        None, "--network", help="Network mode: host, bridge, none"
+    ),
     memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
 ) -> None:
@@ -179,8 +183,8 @@ def shell(
         config.container_socket = True
     if clipboard:
         config.clipboard = True
-    if no_network:
-        config.no_network = True
+    if network:
+        config.network_mode = network
     if memory:
         config.resources.memory = memory
     if cpus:
@@ -218,7 +222,9 @@ def _create_tool_command(tool: str) -> None:
         clipboard: bool = typer.Option(
             False, "--clipboard", help="Enable clipboard access for image pasting"
         ),
-        no_network: bool = typer.Option(False, "--no-network", help="Disable network"),
+        network: str | None = typer.Option(
+            None, "--network", help="Network mode: host, bridge, none"
+        ),
         no_yolo: bool = typer.Option(False, "--no-yolo", help="Disable auto-confirm mode"),
         memory: str | None = typer.Option(
             None, "--memory", "-m", help="Memory limit (e.g., 8g)"
@@ -243,8 +249,8 @@ def _create_tool_command(tool: str) -> None:
             config.container_socket = True
         if clipboard:
             config.clipboard = True
-        if no_network:
-            config.no_network = True
+        if network:
+            config.network_mode = network
         if memory:
             config.resources.memory = memory
         if cpus:
@@ -281,7 +287,7 @@ def config_cmd() -> None:
     console.print(f"[bold]ai_config:[/] {cfg.ai_config}")
     console.print(f"[bold]container_socket:[/] {cfg.container_socket}")
     console.print(f"[bold]clipboard:[/] {cfg.clipboard}")
-    console.print(f"[bold]no_network:[/] {cfg.no_network}")
+    console.print(f"[bold]network_mode:[/] {cfg.network_mode}")
     console.print(f"[bold]readonly_project:[/] {cfg.readonly_project}")
     console.print("\n[bold]Auto-update:[/]")
     console.print(f"  auto_pull_image: {cfg.auto_pull_image}")

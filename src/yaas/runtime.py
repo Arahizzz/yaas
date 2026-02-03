@@ -65,6 +65,9 @@ class ContainerSpec:
     # Supplementary groups (GIDs)
     groups: list[int] | None = None
 
+    # PID namespace mode
+    pid_mode: str | None = None
+
     # Resource limits
     memory: str | None = None  # e.g., "8g"
     memory_swap: str | None = None  # None = same as memory (no swap)
@@ -176,6 +179,10 @@ class PodmanRuntime:
         if spec.network_mode:
             cmd.extend(["--network", spec.network_mode])
 
+        # PID namespace
+        if spec.pid_mode:
+            cmd.extend(["--pid", spec.pid_mode])
+
         # Environment
         for key, value in spec.environment.items():
             cmd.extend(["-e", f"{key}={value}"])
@@ -277,6 +284,10 @@ class DockerRuntime:
         # Network
         if spec.network_mode:
             cmd.extend(["--network", spec.network_mode])
+
+        # PID namespace
+        if spec.pid_mode:
+            cmd.extend(["--pid", spec.pid_mode])
 
         # Environment
         for key, value in spec.environment.items():

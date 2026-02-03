@@ -40,8 +40,9 @@ class Config:
     clipboard: bool = False  # Enable clipboard access for image pasting
 
     # Isolation
-    no_network: bool = False
+    network_mode: str = "bridge"  # "host", "bridge", or "none"
     readonly_project: bool = False
+    pid_mode: str | None = None
 
     # Resource limits
     resources: ResourceLimits = field(default_factory=ResourceLimits)
