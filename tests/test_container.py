@@ -40,6 +40,7 @@ class TestBuildContainerSpec:
         env = {
             "USER": "testuser",
             "TERM": "xterm-256color",
+            "COLORTERM": "truecolor",
             "ANTHROPIC_API_KEY": "test-key-123",
         }
         with patch.dict(os.environ, env):
@@ -48,6 +49,7 @@ class TestBuildContainerSpec:
         assert spec.environment["TERM"] == "xterm-256color"
         assert spec.environment["ANTHROPIC_API_KEY"] == "test-key-123"
         assert spec.environment["YAAS"] == "1"
+        assert spec.environment["COLORTERM"] == "truecolor"
 
     def test_network_isolation(self, mock_linux, project_dir, clean_env) -> None:
         """Test network isolation setting."""

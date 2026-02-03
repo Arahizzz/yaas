@@ -457,9 +457,11 @@ def _build_environment(
         "MISE_YES": "1",
     }
 
-    # Forward TERM
+    # Forward terminal info
     if term := os.environ.get("TERM"):
         env["TERM"] = term
+    if colorterm := os.environ.get("COLORTERM"):
+        env["COLORTERM"] = colorterm
 
     # Forward API keys
     if config.forward_api_keys:
