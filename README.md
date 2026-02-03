@@ -21,7 +21,7 @@ Container sandboxing for AI agents is nothing new, but most solutions have frict
 - **Config persistence** - Direct mounts for `.claude`, `.gitconfig`, etc.
 - **SSH agent forwarding** - Use host SSH keys inside container
 - **Resource limits** - Memory, CPU, and PID limits to prevent runaway processes
-- **Network isolation** - Optional `--no-network` for paranoid mode
+- **Network isolation** - Configurable network mode (host, bridge, none)
 - **Git worktrees** - Parallel development support with `yaas worktree`
 - **Ephemeral clones** - Explore remote repos in isolated volumes with `--clone`
 
@@ -165,7 +165,7 @@ yaas shell --clone https://github.com/user/repo
 yaas claude --clone git@github.com:org/private-repo --ssh-agent
 
 # Secure exploration: clone first, then run without network
-yaas claude --clone https://github.com/user/repo --no-network
+yaas claude --clone https://github.com/user/repo --network none
 
 # Run a command in the cloned repo
 yaas run --clone https://github.com/user/repo -- make test
@@ -200,8 +200,9 @@ container_socket = false   # Mount docker/podman socket for docker-in-docker
 clipboard = false          # Enable clipboard access for image pasting
 
 # Isolation
-no_network = false         # Disable network entirely
+network_mode = "bridge"    # "host", "bridge" (default), or "none"
 readonly_project = false   # Mount project directory as read-only
+pid_mode = "host"          # PID namespace: "host" or isolated (default, omit)
 
 # Auto-update behavior
 auto_pull_image = true     # Pull container image on startup
