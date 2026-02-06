@@ -10,12 +10,15 @@ import pytest
 from yaas.config import Config
 from yaas.constants import CLONE_WORKSPACE, RUNTIME_IMAGE
 from yaas.container import (
+    _add_worktree_mounts,
     _parse_mount_spec,
     build_clone_spec,
     build_clone_work_spec,
     build_container_spec,
     extract_repo_name,
 )
+from yaas.runtime import Mount
+from yaas.worktree import WorktreeError
 
 
 class TestBuildContainerSpec:
@@ -434,3 +437,273 @@ class TestBuildCloneWorkSpec:
             spec = build_clone_work_spec(config, "yaas-clone-abc123", "repo", ["bash"])
 
         assert spec.environment.get("SSH_AUTH_SOCK") == "/ssh-agent"
+
+
+class TestWorktreeMounts:
+    """Tests for worktree mount logic in _add_worktree_mounts."""
+
+    def test_worktree_base_mounted_when_exists(self, tmp_path: Path) -> None:
+        """Normal session: worktree base dir is mounted when it exists."""
+        git_root = tmp_path / "repo"
+        git_root.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"
+        wt_base.mkdir(parents=True)
+        project_dir = git_root
+
+        mounts: list[Mount] = []
+        with (
+            patch("yaas.container.get_main_repo_root", return_value=git_root),
+            patch("yaas.container.get_worktree_base_dir", return_value=wt_base),
+        ):
+            skip = _add_worktree_mounts(mounts, project_dir, read_only=False)
+
+        assert skip is False
+        wt_mount = next((m for m in mounts if m.source == str(wt_base)), None)
+        assert wt_mount is not None
+        assert wt_mount.target == str(wt_base)
+        assert wt_mount.read_only is False
+
+    def test_worktree_base_skipped_when_missing(self, tmp_path: Path) -> None:
+        """Normal session: no mount added when worktree base dir doesn't exist."""
+        git_root = tmp_path / "repo"
+        git_root.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"  # Not created
+        project_dir = git_root
+
+        mounts: list[Mount] = []
+        with (
+            patch("yaas.container.get_main_repo_root", return_value=git_root),
+            patch("yaas.container.get_worktree_base_dir", return_value=wt_base),
+        ):
+            skip = _add_worktree_mounts(mounts, project_dir, read_only=False)
+
+        assert skip is False
+        assert len(mounts) == 0
+
+    def test_normal_session_respects_readonly(self, tmp_path: Path) -> None:
+        """Normal session: worktree base mount respects read_only flag."""
+        git_root = tmp_path / "repo"
+        git_root.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"
+        wt_base.mkdir(parents=True)
+        project_dir = git_root
+
+        mounts: list[Mount] = []
+        with (
+            patch("yaas.container.get_main_repo_root", return_value=git_root),
+            patch("yaas.container.get_worktree_base_dir", return_value=wt_base),
+        ):
+            _add_worktree_mounts(mounts, project_dir, read_only=True)
+
+        wt_mount = next((m for m in mounts if m.source == str(wt_base)), None)
+        assert wt_mount is not None
+        assert wt_mount.read_only is True
+
+    def test_worktree_session_mounts_main_repo(self, tmp_path: Path) -> None:
+        """Worktree session: main repo is mounted read-only regardless of read_only flag."""
+        main_repo = tmp_path / "repo"
+        main_repo.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"
+        wt_base.mkdir(parents=True)
+        project_dir = wt_base / "feature-branch"
+        project_dir.mkdir()
+
+        mounts: list[Mount] = []
+        with (
+            patch("yaas.container.get_main_repo_root", return_value=main_repo),
+            patch("yaas.container.get_worktree_base_dir", return_value=wt_base),
+        ):
+            _add_worktree_mounts(mounts, project_dir, read_only=False)
+
+        repo_mount = next((m for m in mounts if m.source == str(main_repo)), None)
+        assert repo_mount is not None
+        assert repo_mount.target == str(main_repo)
+        assert repo_mount.read_only is True
+
+    def test_worktree_session_mounts_wt_base(self, tmp_path: Path) -> None:
+        """Worktree session: worktree base dir is mounted read-write."""
+        main_repo = tmp_path / "repo"
+        main_repo.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"
+        wt_base.mkdir(parents=True)
+        project_dir = wt_base / "feature-branch"
+        project_dir.mkdir()
+
+        mounts: list[Mount] = []
+        with (
+            patch("yaas.container.get_main_repo_root", return_value=main_repo),
+            patch("yaas.container.get_worktree_base_dir", return_value=wt_base),
+        ):
+            _add_worktree_mounts(mounts, project_dir, read_only=False)
+
+        wt_mount = next((m for m in mounts if m.source == str(wt_base)), None)
+        assert wt_mount is not None
+        assert wt_mount.target == str(wt_base)
+        assert wt_mount.read_only is False
+
+    def test_worktree_session_skips_project_mount(self, tmp_path: Path) -> None:
+        """Worktree session: returns True to skip the project_dir mount."""
+        main_repo = tmp_path / "repo"
+        main_repo.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"
+        wt_base.mkdir(parents=True)
+        project_dir = wt_base / "feature-branch"
+        project_dir.mkdir()
+
+        mounts: list[Mount] = []
+        with (
+            patch("yaas.container.get_main_repo_root", return_value=main_repo),
+            patch("yaas.container.get_worktree_base_dir", return_value=wt_base),
+        ):
+            skip = _add_worktree_mounts(mounts, project_dir, read_only=False)
+
+        assert skip is True
+        project_mount = next(
+            (m for m in mounts if m.source == str(project_dir)), None
+        )
+        assert project_mount is None
+
+    def test_worktree_session_respects_readonly(self, tmp_path: Path) -> None:
+        """Worktree session: worktree base dir respects readonly flag."""
+        main_repo = tmp_path / "repo"
+        main_repo.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"
+        wt_base.mkdir(parents=True)
+        project_dir = wt_base / "feature-branch"
+        project_dir.mkdir()
+
+        mounts: list[Mount] = []
+        with (
+            patch("yaas.container.get_main_repo_root", return_value=main_repo),
+            patch("yaas.container.get_worktree_base_dir", return_value=wt_base),
+        ):
+            _add_worktree_mounts(mounts, project_dir, read_only=True)
+
+        wt_mount = next((m for m in mounts if m.source == str(wt_base)), None)
+        assert wt_mount is not None
+        assert wt_mount.read_only is True
+
+    def test_not_a_git_repo(self, tmp_path: Path) -> None:
+        """Non-git directory: no worktree mounts added."""
+        mounts: list[Mount] = []
+        with patch(
+            "yaas.container.get_main_repo_root",
+            side_effect=WorktreeError("Not a git repository"),
+        ):
+            skip = _add_worktree_mounts(mounts, tmp_path, read_only=False)
+
+        assert skip is False
+        assert len(mounts) == 0
+
+    def test_symlinked_worktree_detected(self, tmp_path: Path) -> None:
+        """Worktree session detected even when project_dir is accessed via symlink."""
+        main_repo = tmp_path / "repo"
+        main_repo.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"
+        wt_base.mkdir(parents=True)
+        real_dir = wt_base / "feature-branch"
+        real_dir.mkdir()
+        # Access worktree through a symlink
+        symlink_dir = tmp_path / "linked-worktree"
+        symlink_dir.symlink_to(real_dir)
+
+        mounts: list[Mount] = []
+        with (
+            patch("yaas.container.get_main_repo_root", return_value=main_repo),
+            patch("yaas.container.get_worktree_base_dir", return_value=wt_base),
+        ):
+            skip = _add_worktree_mounts(mounts, symlink_dir, read_only=False)
+
+        assert skip is True
+        repo_mount = next((m for m in mounts if m.source == str(main_repo)), None)
+        assert repo_mount is not None
+
+
+class TestWorktreeMountsIntegration:
+    """Integration tests: build_container_spec with worktree mounts."""
+
+    def _mock_worktree(
+        self, main_repo: Path, wt_base: Path, *, is_worktree: bool = False
+    ) -> ExitStack:
+        """Create an ExitStack with worktree mocks.
+
+        Args:
+            main_repo: The main repository root.
+            wt_base: The worktree base directory.
+            is_worktree: Unused, kept for API compatibility.
+        """
+        _ = is_worktree  # Unused, worktree detection is based on wt_base containment
+        stack = ExitStack()
+        stack.enter_context(
+            patch("yaas.container.get_main_repo_root", return_value=main_repo)
+        )
+        stack.enter_context(
+            patch("yaas.container.get_worktree_base_dir", return_value=wt_base)
+        )
+        return stack
+
+    def test_worktree_session_full_spec(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Worktree session: build_container_spec includes main repo and wt_base,
+        but not project_dir as a separate mount."""
+        main_repo = tmp_path / "repo"
+        main_repo.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"
+        wt_base.mkdir(parents=True)
+        project_dir = wt_base / "feature-branch"
+        project_dir.mkdir()
+
+        config = Config()
+        with self._mock_worktree(main_repo, wt_base, is_worktree=True):
+            spec = build_container_spec(config, project_dir, ["bash"])
+
+        sources = [m.source for m in spec.mounts]
+        # Main repo and wt_base should be present
+        assert str(main_repo) in sources
+        assert str(wt_base) in sources
+        # project_dir should NOT be separately mounted (covered by wt_base)
+        project_mounts = [m for m in spec.mounts if m.source == str(project_dir)]
+        assert project_mounts == []
+
+        # Verify read-only flags
+        repo_mount = next(m for m in spec.mounts if m.source == str(main_repo))
+        assert repo_mount.read_only is True
+        wt_mount = next(m for m in spec.mounts if m.source == str(wt_base))
+        assert wt_mount.read_only is False
+
+    def test_normal_session_full_spec(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Normal session: build_container_spec includes project_dir and wt_base."""
+        main_repo = tmp_path / "repo"
+        main_repo.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"
+        wt_base.mkdir(parents=True)
+        project_dir = main_repo
+
+        config = Config()
+        with self._mock_worktree(main_repo, wt_base):
+            spec = build_container_spec(config, project_dir, ["bash"])
+
+        sources = [m.source for m in spec.mounts]
+        # Both project_dir and wt_base should be present
+        assert str(project_dir) in sources
+        assert str(wt_base) in sources
+
+    def test_normal_session_no_worktrees(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Normal session without worktrees: only project_dir mounted."""
+        main_repo = tmp_path / "repo"
+        main_repo.mkdir()
+        wt_base = tmp_path / "worktrees" / "abc123"  # Does not exist
+        project_dir = main_repo
+
+        config = Config()
+        with self._mock_worktree(main_repo, wt_base):
+            spec = build_container_spec(config, project_dir, ["bash"])
+
+        sources = [m.source for m in spec.mounts]
+        assert str(project_dir) in sources
+        assert str(wt_base) not in sources
