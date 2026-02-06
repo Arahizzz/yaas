@@ -25,6 +25,11 @@ from .platform import (
     is_macos,
 )
 from .runtime import ContainerSpec, Mount
+from .worktree import (
+    WorktreeError,
+    get_main_repo_root,
+    get_worktree_base_dir,
+)
 
 logger = get_logger()
 
@@ -253,6 +258,59 @@ def build_clone_work_spec(
     )
 
 
+def _add_worktree_mounts(
+    mounts: list[Mount],
+    project_dir: Path,
+    read_only: bool,
+) -> bool:
+    """Add worktree-related mounts and return whether to skip the project_dir mount.
+
+    For worktree sessions (project_dir is inside the worktree base dir):
+    - Mount the main git repo read-only (needed for shared .git/objects, .git/refs)
+    - Mount the worktree base dir with the caller's read_only setting
+    - Signal to skip the normal project_dir mount (already covered by wt_base)
+
+    For normal sessions:
+    - Mount the worktree base dir with the caller's read_only setting if it exists
+      (prevents git marking worktrees as prunable inside the container)
+    - Signal to keep the normal project_dir mount
+
+    Returns True if the project_dir mount should be skipped.
+    """
+    try:
+        main_repo = get_main_repo_root(project_dir)
+        wt_base = get_worktree_base_dir(project_dir, main_repo=main_repo)
+    except WorktreeError:
+        return False
+
+    # Resolve symlinks for reliable containment check
+    resolved_project = project_dir.resolve()
+    resolved_wt_base = wt_base.resolve()
+
+    try:
+        resolved_project.relative_to(resolved_wt_base)
+        is_worktree_session = True
+    except ValueError:
+        is_worktree_session = False
+
+    if is_worktree_session:
+        # Mount main repo read-only for shared git objects/refs
+        mounts.append(Mount(str(main_repo), str(main_repo), read_only=True))
+        # Mount worktree base dir using resolved path (covers this worktree + siblings)
+        mounts.append(
+            Mount(str(resolved_wt_base), str(resolved_wt_base), read_only=read_only)
+        )
+        return True
+
+    # Normal session: mount worktree base dir if it exists (use resolved path)
+    if wt_base.exists():
+        mounts.append(
+            Mount(str(resolved_wt_base), str(resolved_wt_base), read_only=read_only)
+        )
+
+    return False
+
+
 def _build_mounts(
     config: Config,
     project_dir: Path,
@@ -269,14 +327,18 @@ def _build_mounts(
         mounts.append(Mount("/etc/passwd", "/etc/passwd", read_only=True))
         mounts.append(Mount("/etc/group", "/etc/group", read_only=True))
 
+    # Add worktree mounts (may signal to skip the project_dir mount)
+    skip_project_mount = _add_worktree_mounts(mounts, project_dir, config.readonly_project)
+
     # Project directory at real path (critical for docker-in-docker!)
-    mounts.append(
-        Mount(
-            str(project_dir),
-            str(project_dir),
-            read_only=config.readonly_project,
+    if not skip_project_mount:
+        mounts.append(
+            Mount(
+                str(project_dir),
+                str(project_dir),
+                read_only=config.readonly_project,
+            )
         )
-    )
 
     # Add optional mounts
     _add_optional_mounts(config, mounts, groups, home, sandbox_home)
