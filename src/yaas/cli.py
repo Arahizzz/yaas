@@ -598,6 +598,23 @@ def worktree_list() -> None:
         raise typer.Exit(1)
 
 
+@worktree_app.command(name="path")
+def worktree_path(
+    name: str = typer.Argument(..., help="Name of the worktree"),
+) -> None:
+    """Print the filesystem path of a worktree."""
+    try:
+        path = get_worktree_path(name)
+        if path is None:
+            console.print(f"[red]Worktree '{name}' not found[/]", highlight=False)
+            console.print("[dim]Use 'yaas worktree list' to see available worktrees[/]")
+            raise typer.Exit(1)
+        print(path)
+    except WorktreeError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1)
+
+
 @worktree_app.command(name="remove")
 def worktree_remove(
     name: str = typer.Argument(..., help="Name of the worktree to remove"),
