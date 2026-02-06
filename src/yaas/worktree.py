@@ -14,13 +14,32 @@ class WorktreeError(Exception):
 
 
 def get_git_root(project_dir: Path | None = None) -> Path:
-    """Get the root directory of the git repository."""
+    """Get the root directory of the git repository (or worktree)."""
     cmd = ["git", "rev-parse", "--show-toplevel"]
     cwd = str(project_dir) if project_dir else None
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if result.returncode != 0:
         raise WorktreeError(f"Not a git repository: {result.stderr.strip()}")
     return Path(result.stdout.strip())
+
+
+def get_main_repo_root(project_dir: Path | None = None) -> Path:
+    """Get the root of the main repository (not worktree).
+
+    For a worktree, this returns the main repo that contains the shared .git directory.
+    For a main repo, this returns the same as get_git_root.
+    """
+    cmd = ["git", "rev-parse", "--git-common-dir"]
+    cwd = str(project_dir) if project_dir else None
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+    if result.returncode != 0:
+        raise WorktreeError(f"Not a git repository: {result.stderr.strip()}")
+    # --git-common-dir returns the .git directory, parent is the repo root
+    git_common_dir = Path(result.stdout.strip())
+    # Handle both absolute and relative paths
+    if not git_common_dir.is_absolute():
+        git_common_dir = (Path(cwd) / git_common_dir).resolve() if cwd else git_common_dir.resolve()
+    return git_common_dir.parent
 
 
 def get_project_hash(project_dir: Path | None = None) -> str:
@@ -30,10 +49,19 @@ def get_project_hash(project_dir: Path | None = None) -> str:
     return hash_digest[:12]
 
 
-def get_worktree_base_dir(project_dir: Path | None = None) -> Path:
-    """Return WORKTREES_DIR / project_hash."""
-    project_hash = get_project_hash(project_dir)
-    return WORKTREES_DIR / project_hash
+def get_worktree_base_dir(
+    project_dir: Path | None = None, *, main_repo: Path | None = None
+) -> Path:
+    """Return WORKTREES_DIR / project_hash.
+
+    Args:
+        project_dir: Project directory to resolve main repo from.
+        main_repo: Pre-resolved main repo root to avoid a redundant subprocess call.
+    """
+    if main_repo is None:
+        main_repo = get_main_repo_root(project_dir)
+    hash_digest = hashlib.sha256(str(main_repo).encode()).hexdigest()[:12]
+    return WORKTREES_DIR / hash_digest
 
 
 def add_worktree(name: str, branch: str | None = None, project_dir: Path | None = None) -> Path:
