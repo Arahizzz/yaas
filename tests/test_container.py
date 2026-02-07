@@ -499,8 +499,8 @@ class TestWorktreeMounts:
         assert wt_mount is not None
         assert wt_mount.read_only is True
 
-    def test_worktree_session_mounts_main_repo(self, tmp_path: Path) -> None:
-        """Worktree session: main repo is mounted read-only regardless of read_only flag."""
+    def test_worktree_session_mounts_main_git_dir(self, tmp_path: Path) -> None:
+        """Worktree session: main repo's .git dir is mounted read-write."""
         main_repo = tmp_path / "repo"
         main_repo.mkdir()
         wt_base = tmp_path / "worktrees" / "abc123"
@@ -515,10 +515,11 @@ class TestWorktreeMounts:
         ):
             _add_worktree_mounts(mounts, project_dir, read_only=False)
 
-        repo_mount = next((m for m in mounts if m.source == str(main_repo)), None)
-        assert repo_mount is not None
-        assert repo_mount.target == str(main_repo)
-        assert repo_mount.read_only is True
+        git_dir = str(main_repo / ".git")
+        git_mount = next((m for m in mounts if m.source == git_dir), None)
+        assert git_mount is not None
+        assert git_mount.target == git_dir
+        assert git_mount.read_only is False
 
     def test_worktree_session_mounts_wt_base(self, tmp_path: Path) -> None:
         """Worktree session: worktree base dir is mounted read-write."""
@@ -615,8 +616,9 @@ class TestWorktreeMounts:
             skip = _add_worktree_mounts(mounts, symlink_dir, read_only=False)
 
         assert skip is True
-        repo_mount = next((m for m in mounts if m.source == str(main_repo)), None)
-        assert repo_mount is not None
+        git_dir = str(main_repo / ".git")
+        git_mount = next((m for m in mounts if m.source == git_dir), None)
+        assert git_mount is not None
 
 
 class TestWorktreeMountsIntegration:
@@ -659,16 +661,17 @@ class TestWorktreeMountsIntegration:
             spec = build_container_spec(config, project_dir, ["bash"])
 
         sources = [m.source for m in spec.mounts]
-        # Main repo and wt_base should be present
-        assert str(main_repo) in sources
+        git_dir = str(main_repo / ".git")
+        # Main repo .git dir and wt_base should be present
+        assert git_dir in sources
         assert str(wt_base) in sources
         # project_dir should NOT be separately mounted (covered by wt_base)
         project_mounts = [m for m in spec.mounts if m.source == str(project_dir)]
         assert project_mounts == []
 
         # Verify read-only flags
-        repo_mount = next(m for m in spec.mounts if m.source == str(main_repo))
-        assert repo_mount.read_only is True
+        git_mount = next(m for m in spec.mounts if m.source == git_dir)
+        assert git_mount.read_only is False
         wt_mount = next(m for m in spec.mounts if m.source == str(wt_base))
         assert wt_mount.read_only is False
 

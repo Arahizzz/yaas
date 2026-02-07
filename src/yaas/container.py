@@ -266,7 +266,8 @@ def _add_worktree_mounts(
     """Add worktree-related mounts and return whether to skip the project_dir mount.
 
     For worktree sessions (project_dir is inside the worktree base dir):
-    - Mount the main git repo read-only (needed for shared .git/objects, .git/refs)
+    - Mount the main repo's .git directory read-write (needed for shared objects, refs,
+      worktree state, and lock files). The working tree is not mounted at all.
     - Mount the worktree base dir with the caller's read_only setting
     - Signal to skip the normal project_dir mount (already covered by wt_base)
 
@@ -294,8 +295,9 @@ def _add_worktree_mounts(
         is_worktree_session = False
 
     if is_worktree_session:
-        # Mount main repo read-only for shared git objects/refs
-        mounts.append(Mount(str(main_repo), str(main_repo), read_only=True))
+        # Mount main repo's .git dir read-write for shared objects/refs/worktree state
+        git_dir = main_repo / ".git"
+        mounts.append(Mount(str(git_dir), str(git_dir)))
         # Mount worktree base dir using resolved path (covers this worktree + siblings)
         mounts.append(
             Mount(str(resolved_wt_base), str(resolved_wt_base), read_only=read_only)
