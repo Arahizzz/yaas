@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     autoconf automake libtool \
     coreutils bc \
     # Essential development libraries
-    libssl-dev zlib1g-dev libxml2-dev \
+    libssl-dev zlib1g-dev libxml2-dev libffi-dev \
     # VCS and security
     git git-lfs openssh-client gnupg ca-certificates \
     # Utilities
