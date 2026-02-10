@@ -18,6 +18,7 @@ Container sandboxing for AI agents is nothing new, but most solutions have frict
 - **Podman first, Docker fallback** - Better rootless security model
 - **AI CLI shortcuts** - `yaas claude`, `yaas codex`, etc. with YOLO mode
 - **Mise integration** - Automatic tool version management inside containers
+- **Nix packages** - Access 100k+ packages from nixpkgs via [mise-nix](https://github.com/jbadeau/mise-nix)
 - **Config persistence** - Direct mounts for `.claude`, `.gitconfig`, etc.
 - **SSH agent forwarding** - Use host SSH keys inside container
 - **Resource limits** - Memory, CPU, and PID limits to prevent runaway processes
@@ -242,11 +243,11 @@ The following API keys are automatically forwarded to the container if they're s
 
 ## Mise Integration
 
-YAAS uses [mise](https://mise.jdx.dev/) to manage tools inside the container. This means you can install, upgrade, or remove tools without rebuilding the container image.
+YAAS uses [mise](https://mise.jdx.dev/) to manage tools inside the container. This means you can install, upgrade, or remove tools without rebuilding the container image. The runtime image also includes [Nix](https://nixos.org/) and the [mise-nix](https://github.com/jbadeau/mise-nix) plugin, giving you access to 100,000+ packages from nixpkgs.
 
 ### How It Works
 
-On first run, YAAS creates a default mise configuration at `~/.config/yaas/mise.toml`. Tool installations are stored in named volumes (`yaas-data` and `yaas-cache`), so they persist across sessions.
+On first run, YAAS creates a default mise configuration at `~/.config/yaas/mise.toml`. Tool installations are stored in named volumes (`yaas-data`, `yaas-cache`, and `yaas-nix`), so they persist across sessions.
 
 By default, YAAS runs `mise upgrade` on each container start to keep tools current. You can disable this by setting `auto_upgrade_tools = false` in your config.
 
@@ -273,6 +274,11 @@ uv = "latest"
 # Add additional tools
 go = "1.22"
 rust = "stable"
+
+# Nix packages (100k+ available, see https://www.nixhub.io/)
+"nix:php" = "latest"
+"nix:shellcheck" = "latest"
+"nix:htop" = "latest"
 
 # AI tools
 "npm:@anthropic-ai/claude-code" = "latest"
@@ -318,6 +324,7 @@ YAAS uses named volumes to persist data across container sessions:
 
 - `yaas-data` stores mise tool installations (`~/.local/share/mise`)
 - `yaas-cache` stores general cache data (`~/.cache`)
+- `yaas-nix` stores the Nix store and database (`/nix`)
 
 This is why tools installed via mise don't need to be reinstalled every time you start a new container. Running `yaas reset-volumes` deletes these volumes, which will trigger a fresh tool installation on the next run.
 
