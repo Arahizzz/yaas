@@ -10,7 +10,7 @@ python = "latest"
 # dotnet = "latest"
 # java = "latest"
 # ruby = "latest"
-# "ubi:adwinying/php"= "8.4"
+# "nix:php" = "latest"
 
 # Python tooling
 uv = "latest"
@@ -24,6 +24,12 @@ fzf = "latest"
 jq = "latest"
 bat = "latest"
 delta = "latest"
+
+# Nix packages (100k+ packages available via mise-nix plugin, pre-installed in image)
+# See available packages: https://www.nixhub.io/
+# "nix:htop" = "latest"
+# "nix:shellcheck" = "latest"
+# "nix:tree" = "latest"
 
 # AI CLIs
 "npm:@anthropic-ai/claude-code" = "latest"
