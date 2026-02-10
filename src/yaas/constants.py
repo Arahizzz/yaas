@@ -19,6 +19,7 @@ RUNTIME_IMAGE = os.getenv("YAAS_RUNTIME_IMAGE", "ghcr.io/arahizzz/yaas/runtime:0
 # Container volumes for persistence
 MISE_DATA_VOLUME = "yaas-data"  # ~/.local/share/mise (tools)
 CACHE_VOLUME = "yaas-cache"  # ~/.cache (general cache)
+NIX_VOLUME = "yaas-nix"  # /nix (Nix store and database)
 
 # Clone feature constants
 CLONE_WORKSPACE = "/home/workspace"

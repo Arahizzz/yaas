@@ -42,6 +42,12 @@ RUN curl -fsSL https://mise.run | sh \
     && mv /root/.local/bin/mise /usr/local/bin/mise
 
 # ============================================================
+# Install Nix (package manager for 100k+ packages via mise-nix)
+# ============================================================
+RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
+    | sh -s -- install linux --init none --no-confirm
+
+# ============================================================
 # Environment setup
 # ============================================================
 ENV HOME=/home

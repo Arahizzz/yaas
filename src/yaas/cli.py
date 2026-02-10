@@ -14,6 +14,7 @@ from .constants import (
     CACHE_VOLUME,
     CLONE_VOLUME_PREFIX,
     MISE_DATA_VOLUME,
+    NIX_VOLUME,
     RUNTIME_IMAGE,
     TOOL_SHORTCUTS,
     TOOL_YOLO_FLAGS,
@@ -313,7 +314,7 @@ def reset_volumes(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
     """Reset yaas volumes (removes installed tools and cache)."""
-    volumes = [MISE_DATA_VOLUME, CACHE_VOLUME]
+    volumes = [MISE_DATA_VOLUME, CACHE_VOLUME, NIX_VOLUME]
 
     if not force:
         console.print("[yellow]This will delete all installed tools and cache.[/]")

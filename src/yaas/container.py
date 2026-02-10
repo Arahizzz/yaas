@@ -14,6 +14,7 @@ from .constants import (
     CLONE_WORKSPACE,
     MISE_CONFIG_PATH,
     MISE_DATA_VOLUME,
+    NIX_VOLUME,
     RUNTIME_IMAGE,
 )
 from .logging import get_logger
@@ -469,6 +470,7 @@ def _add_mise_support(mounts: list[Mount]) -> None:
     # Named volumes for persistence between runs
     mounts.append(Mount(MISE_DATA_VOLUME, f"{sandbox_home}/.local/share/mise", type="volume"))
     mounts.append(Mount(CACHE_VOLUME, f"{sandbox_home}/.cache", type="volume"))
+    mounts.append(Mount(NIX_VOLUME, "/nix", type="volume"))
 
     # Ensure config directory exists
     config_dir = MISE_CONFIG_PATH.parent
