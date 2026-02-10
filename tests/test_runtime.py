@@ -1,6 +1,5 @@
 """Tests for container runtime."""
 
-import subprocess
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
