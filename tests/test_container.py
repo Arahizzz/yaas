@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from yaas.config import Config
-from yaas.constants import CLONE_WORKSPACE, RUNTIME_IMAGE
+from yaas.constants import CLONE_WORKSPACE, NIX_VOLUME, RUNTIME_IMAGE
 from yaas.container import (
     _add_worktree_mounts,
     _parse_mount_spec,
@@ -75,6 +75,16 @@ class TestBuildContainerSpec:
         assert spec.memory == "16g"
         assert spec.cpus == 4.0
         assert spec.pids_limit == 500
+
+    def test_nix_volume_mounted(self, mock_linux, project_dir, clean_env) -> None:
+        """Test that Nix volume is mounted for package persistence."""
+        config = Config()
+        spec = build_container_spec(config, project_dir, ["bash"])
+        nix_mount = next(
+            (m for m in spec.mounts if m.target == "/nix" and m.type == "volume"), None
+        )
+        assert nix_mount is not None
+        assert nix_mount.source == NIX_VOLUME
 
     def test_macos_no_passwd_mount(self, mock_macos, project_dir, clean_env) -> None:
         """Test that /etc/passwd is not mounted on non-Linux (macOS)."""
@@ -387,6 +397,15 @@ class TestBuildCloneSpec:
 
         assert "--branch" not in spec.command
 
+    def test_no_nix_volume(self, mock_linux, project_dir, clean_env) -> None:
+        """Test that clone spec does not include Nix volume (not needed for git clone)."""
+        config = Config()
+        spec = build_clone_spec(
+            config, "https://github.com/user/repo.git", "yaas-clone-abc123", "repo"
+        )
+        nix_mount = next((m for m in spec.mounts if m.target == "/nix"), None)
+        assert nix_mount is None
+
 
 class TestBuildCloneWorkSpec:
     """Tests for build_clone_work_spec function."""
@@ -415,6 +434,16 @@ class TestBuildCloneWorkSpec:
         )
         assert volume_mount is not None
         assert volume_mount.target == CLONE_WORKSPACE
+
+    def test_nix_volume_mounted(self, mock_linux, project_dir, clean_env) -> None:
+        """Test that clone work spec includes Nix volume."""
+        config = Config()
+        spec = build_clone_work_spec(config, "yaas-clone-abc123", "repo", ["bash"])
+        nix_mount = next(
+            (m for m in spec.mounts if m.target == "/nix" and m.type == "volume"), None
+        )
+        assert nix_mount is not None
+        assert nix_mount.source == NIX_VOLUME
 
     def test_network_mode_respected(self, mock_linux, project_dir, clean_env) -> None:
         """Test network_mode is respected in clone work container."""
