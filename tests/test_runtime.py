@@ -270,3 +270,56 @@ class TestDockerRuntime:
             assert result is True
             args = mock_run.call_args[0][0]
             assert args == ["docker", "volume", "rm", "-f", "test-volume"]
+
+
+# ============================================================
+# Device passthrough tests
+# ============================================================
+
+
+class TestDevicePassthrough:
+    """Tests for --device flag generation in both runtimes."""
+
+    def test_podman_device_passthrough(self) -> None:
+        """Test Podman emits --device flags."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec(devices=["/dev/dri", "/dev/snd"])
+            cmd = runtime._build_command(spec)
+
+        assert "--device" in cmd
+        device_idx = cmd.index("--device")
+        assert cmd[device_idx + 1] == "/dev/dri"
+        # Second device
+        second_idx = cmd.index("--device", device_idx + 1)
+        assert cmd[second_idx + 1] == "/dev/snd"
+
+    def test_docker_device_passthrough(self) -> None:
+        """Test Docker emits --device flags."""
+        with mock_docker_socket(accessible=True):
+            runtime = DockerRuntime()
+
+        spec = make_spec(devices=["/dev/dri"])
+        cmd = runtime._build_command(spec)
+
+        assert "--device" in cmd
+        device_idx = cmd.index("--device")
+        assert cmd[device_idx + 1] == "/dev/dri"
+
+    def test_no_devices_no_flags(self) -> None:
+        """Test no --device flags when devices is None."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec(devices=None)
+            cmd = runtime._build_command(spec)
+
+        assert "--device" not in cmd
+
+    def test_empty_devices_no_flags(self) -> None:
+        """Test no --device flags when devices is empty list."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec(devices=[])
+            cmd = runtime._build_command(spec)
+
+        assert "--device" not in cmd

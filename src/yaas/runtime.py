@@ -68,6 +68,9 @@ class ContainerSpec:
     # PID namespace mode
     pid_mode: str | None = None
 
+    # Device passthrough (e.g., /dev/dri for GPU)
+    devices: list[str] | None = None
+
     # Resource limits
     memory: str | None = None  # e.g., "8g"
     memory_swap: str | None = None  # None = same as memory (no swap)
@@ -191,6 +194,11 @@ class PodmanRuntime:
         for m in spec.mounts:
             cmd.extend(["--mount", _format_mount(m)])
 
+        # Device passthrough
+        if spec.devices:
+            for device in spec.devices:
+                cmd.extend(["--device", device])
+
         # Resource limits
         if spec.memory:
             cmd.extend(["--memory", spec.memory])
@@ -296,6 +304,11 @@ class DockerRuntime:
         # Mounts
         for m in spec.mounts:
             cmd.extend(["--mount", _format_mount(m)])
+
+        # Device passthrough
+        if spec.devices:
+            for device in spec.devices:
+                cmd.extend(["--device", device])
 
         # Resource limits
         if spec.memory:
