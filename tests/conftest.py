@@ -18,23 +18,26 @@ import pytest
 def _mock_platform(
     is_linux: bool = False,
     is_macos: bool = False,
+    is_wsl: bool = False,
     uid: int = 1000,
     gid: int = 1000,
 ) -> Generator[None, None, None]:
     """Context manager for mocking platform detection across all modules.
 
     Patches platform detection at multiple levels:
-    - yaas.platform: Source module where is_linux/is_macos are defined
-    - yaas.container: Module that imports is_linux/is_macos
+    - yaas.platform: Source module where is_linux/is_macos/is_wsl are defined
+    - yaas.container: Module that imports is_linux/is_macos/is_wsl
     - yaas.runtime: Module that imports is_linux
     """
     with ExitStack() as stack:
         # Patch at source (platform.py) - affects internal calls like get_container_socket_paths
         stack.enter_context(patch("yaas.platform.is_linux", return_value=is_linux))
         stack.enter_context(patch("yaas.platform.is_macos", return_value=is_macos))
+        stack.enter_context(patch("yaas.platform.is_wsl", return_value=is_wsl))
         # Patch imported references in other modules
         stack.enter_context(patch("yaas.container.is_linux", return_value=is_linux))
         stack.enter_context(patch("yaas.container.is_macos", return_value=is_macos))
+        stack.enter_context(patch("yaas.container.is_wsl", return_value=is_wsl))
         stack.enter_context(patch("yaas.container.get_uid_gid", return_value=(uid, gid)))
         stack.enter_context(patch("yaas.runtime.is_linux", return_value=is_linux))
         yield
@@ -44,6 +47,13 @@ def _mock_platform(
 def mock_linux() -> Generator[None, None, None]:
     """Mock Linux platform for container and runtime modules."""
     with _mock_platform(is_linux=True, is_macos=False):
+        yield
+
+
+@pytest.fixture
+def mock_wsl() -> Generator[None, None, None]:
+    """Mock WSL2 platform (is_linux=True, is_wsl=True)."""
+    with _mock_platform(is_linux=True, is_macos=False, is_wsl=True):
         yield
 
 
