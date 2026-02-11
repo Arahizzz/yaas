@@ -15,6 +15,11 @@ if [[ ! -d "$XDG_RUNTIME_DIR" ]]; then
     mkdir -p "$XDG_RUNTIME_DIR"
     chmod 700 "$XDG_RUNTIME_DIR"
 fi
+# Fix ownership if the container runtime created the directory as root
+# (happens when bind-mounting sockets into /run/user/$UID/)
+if [[ "$(stat -c %u "$XDG_RUNTIME_DIR")" != "$(id -u)" ]]; then
+    sudo chown "$(id -u):$(id -g)" "$XDG_RUNTIME_DIR"
+fi
 
 # ============================================================
 # Mise setup (MISE_YES=1 auto-confirms trust prompts)

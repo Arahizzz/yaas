@@ -23,6 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     locales icu-devtools \
     # Clipboard tools
     wl-clipboard xclip \
+    # GUI integration (D-Bus, GPU, audio)
+    dbus \
+    libgl1-mesa-dri mesa-utils \
+    pulseaudio-utils \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 
