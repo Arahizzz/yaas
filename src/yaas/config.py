@@ -38,6 +38,10 @@ class Config:
     ai_config: bool = False  # Mount all AI tool configs (.claude, .codex, .gemini, .opencode)
     container_socket: bool = False  # Docker/Podman socket passthrough
     clipboard: bool = False  # Enable clipboard access for image pasting
+    display: bool = False  # Full display passthrough (read-write Wayland/X11 sockets)
+    dbus: bool = False  # Mount D-Bus session bus socket
+    gpu: bool = False  # GPU device passthrough (/dev/dri)
+    audio: bool = False  # Audio passthrough (PipeWire/PulseAudio)
 
     # Isolation
     network_mode: str = "bridge"  # "host", "bridge", or "none"

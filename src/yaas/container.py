@@ -23,10 +23,15 @@ from .platform import (
     get_uid_gid,
     is_linux,
     is_macos,
+    is_wsl,
 )
 from .runtime import ContainerSpec, Mount
 
 logger = get_logger()
+
+# WSLg socket paths (Windows Subsystem for Linux GUI support)
+_WSLG_RUNTIME_DIR = Path("/mnt/wslg/runtime-dir")
+_WSLG_PULSE_SERVER = Path("/mnt/wslg/PulseServer")
 
 
 def extract_repo_name(url: str) -> str:
@@ -167,8 +172,8 @@ def build_container_spec(
     home = Path.home()
     sandbox_home = "/home"
 
-    # Build mounts and collect supplementary groups
-    mounts, groups = _build_mounts(config, project_dir, home, sandbox_home)
+    # Build mounts and collect supplementary groups and devices
+    mounts, groups, devices = _build_mounts(config, project_dir, home, sandbox_home)
 
     # Build environment
     environment = _build_environment(config, project_dir, sandbox_home)
@@ -188,6 +193,7 @@ def build_container_spec(
         stdin_open=stdin_open,
         groups=groups or None,
         pid_mode=config.pid_mode,
+        devices=devices or None,
         # Resource limits
         memory=config.resources.memory,
         memory_swap=config.resources.memory_swap,
@@ -217,6 +223,7 @@ def build_clone_work_spec(
 
     mounts: list[Mount] = []
     groups: list[int] = []
+    devices: list[str] = []
 
     # UID/GID passthrough on Linux
     if is_linux():
@@ -227,7 +234,7 @@ def build_clone_work_spec(
     mounts.append(Mount(clone_volume, CLONE_WORKSPACE, type="volume"))
 
     # Add standard mounts (config, SSH, clipboard, mise, etc.)
-    _add_optional_mounts(config, mounts, groups, home, sandbox_home)
+    _add_optional_mounts(config, mounts, groups, devices, home, sandbox_home)
 
     # Build environment (use working_dir as project path for mise trust)
     environment = _build_environment(config, Path(working_dir), sandbox_home)
@@ -246,6 +253,7 @@ def build_clone_work_spec(
         stdin_open=stdin_open,
         groups=groups or None,
         pid_mode=config.pid_mode,
+        devices=devices or None,
         memory=config.resources.memory,
         memory_swap=config.resources.memory_swap,
         cpus=config.resources.cpus,
@@ -258,10 +266,11 @@ def _build_mounts(
     project_dir: Path,
     home: Path,
     sandbox_home: str,
-) -> tuple[list[Mount], list[int]]:
-    """Assemble all mounts and supplementary groups."""
+) -> tuple[list[Mount], list[int], list[str]]:
+    """Assemble all mounts, supplementary groups, and devices."""
     mounts: list[Mount] = []
     groups: list[int] = []
+    devices: list[str] = []
 
     # UID/GID passthrough - mount passwd/group so user is recognized
     # Only on Linux - macOS Docker Desktop handles this differently
@@ -279,23 +288,24 @@ def _build_mounts(
     )
 
     # Add optional mounts
-    _add_optional_mounts(config, mounts, groups, home, sandbox_home)
+    _add_optional_mounts(config, mounts, groups, devices, home, sandbox_home)
 
     # User-defined mounts
     for mount_spec in config.mounts:
         mounts.append(_parse_mount_spec(mount_spec, project_dir))
 
-    return mounts, groups
+    return mounts, groups, devices
 
 
 def _add_optional_mounts(
     config: Config,
     mounts: list[Mount],
     groups: list[int],
+    devices: list[str],
     home: Path,
     sandbox_home: str,
 ) -> None:
-    """Add optional mounts based on config (git, AI, SSH, clipboard, mise)."""
+    """Add optional mounts based on config (git, AI, SSH, display, clipboard, etc.)."""
     if config.git_config:
         _add_config_mounts(mounts, home, sandbox_home, [".gitconfig", ".config/git"])
 
@@ -324,8 +334,20 @@ def _add_optional_mounts(
     if config.container_socket:
         _add_container_socket(mounts, groups)
 
-    if config.clipboard:
+    # Display supersedes clipboard (read-write superset)
+    if config.display:
+        _add_display_support(mounts)
+    elif config.clipboard:
         _add_clipboard_support(mounts)
+
+    if config.dbus:
+        _add_dbus_support(mounts)
+
+    if config.gpu:
+        _add_gpu_support(devices, groups)
+
+    if config.audio:
+        _add_audio_support(mounts)
 
     _add_mise_support(mounts)
 
@@ -362,40 +384,149 @@ def _add_container_socket(mounts: list[Mount], groups: list[int]) -> None:
     logger.warning("No container socket found, docker/podman won't work inside sandbox")
 
 
-def _add_clipboard_support(mounts: list[Mount]) -> None:
-    """Mount display sockets for clipboard access (Wayland or X11).
+def _add_display_sockets(mounts: list[Mount], *, read_only: bool) -> bool:
+    """Mount display sockets (Wayland or X11). Returns True if any socket was mounted.
 
     Only works on Linux where display server sockets can be mounted.
-    macOS/Windows don't have accessible display sockets.
+    Supports WSLg paths as fallback on WSL2.
     """
-    # Clipboard via display sockets only works on Linux
     if not is_linux():
         if is_macos():
-            logger.warning(
-                "Clipboard not supported on macOS (no display server sockets available)"
-            )
-        return
+            logger.warning("Display sockets not available on macOS")
+        return False
 
     wayland_display = os.environ.get("WAYLAND_DISPLAY")
     xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
 
     # Prefer Wayland if available - mount only the socket file (not whole dir)
-    # to leave /run/user/$UID writable for GPG sockets
-    if wayland_display and xdg_runtime_dir:
-        wayland_socket = Path(xdg_runtime_dir) / wayland_display
-        if wayland_socket.exists():
-            mounts.append(Mount(str(wayland_socket), str(wayland_socket), read_only=True))
-            return
+    if wayland_display:
+        # Try standard path first, then WSLg fallback
+        candidates = []
+        if xdg_runtime_dir:
+            candidates.append(Path(xdg_runtime_dir) / wayland_display)
+        if is_wsl():
+            candidates.append(_WSLG_RUNTIME_DIR / wayland_display)
 
-    # Fall back to X11
+        for wayland_socket in candidates:
+            if wayland_socket.exists():
+                mounts.append(
+                    Mount(str(wayland_socket), str(wayland_socket), read_only=read_only)
+                )
+                return True
+
+    # Fall back to X11 (same path on native Linux and WSLg)
     x_display = os.environ.get("DISPLAY")
     if x_display:
         x11_socket = Path("/tmp/.X11-unix")
         if x11_socket.exists():
-            mounts.append(Mount(str(x11_socket), str(x11_socket), read_only=True))
-            return
+            mounts.append(Mount(str(x11_socket), str(x11_socket), read_only=read_only))
+            # Mount .Xauthority for X11 authentication
+            xauthority = os.environ.get("XAUTHORITY")
+            if xauthority:
+                xauth_path = Path(xauthority)
+            else:
+                xauth_path = Path.home() / ".Xauthority"
+            if xauth_path.exists():
+                mounts.append(Mount(str(xauth_path), str(xauth_path), read_only=True))
+            return True
 
-    logger.warning("No display server detected, clipboard won't work inside sandbox")
+    return False
+
+
+def _add_display_support(mounts: list[Mount]) -> None:
+    """Mount display sockets read-write for full GUI app rendering."""
+    if not _add_display_sockets(mounts, read_only=False):
+        logger.warning("No display server detected, display passthrough won't work inside sandbox")
+
+
+def _add_clipboard_support(mounts: list[Mount]) -> None:
+    """Mount display sockets read-only for clipboard access."""
+    if not _add_display_sockets(mounts, read_only=True):
+        logger.warning("No display server detected, clipboard won't work inside sandbox")
+
+
+def _add_dbus_support(mounts: list[Mount]) -> None:
+    """Mount D-Bus session bus socket for inter-process communication."""
+    if not is_linux():
+        if is_macos():
+            logger.warning("D-Bus not supported on macOS")
+        return
+
+    if is_wsl():
+        logger.warning("D-Bus session bus not available in WSL2")
+        return
+
+    xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if not xdg_runtime_dir:
+        logger.warning("XDG_RUNTIME_DIR not set, D-Bus session bus won't work inside sandbox")
+        return
+
+    bus_socket = Path(xdg_runtime_dir) / "bus"
+    if bus_socket.exists():
+        mounts.append(Mount(str(bus_socket), str(bus_socket)))
+    else:
+        logger.warning("D-Bus session bus socket not found, D-Bus won't work inside sandbox")
+
+
+def _add_gpu_support(devices: list[str], groups: list[int]) -> None:
+    """Add GPU device passthrough (/dev/dri)."""
+    if not is_linux():
+        if is_macos():
+            logger.warning("GPU passthrough not supported on macOS")
+        return
+
+    dri_path = Path("/dev/dri")
+    if not dri_path.exists():
+        logger.warning("/dev/dri not found, GPU passthrough won't work inside sandbox")
+        return
+
+    devices.append("/dev/dri")
+
+    # Add render node GID for access permissions
+    render_node = Path("/dev/dri/renderD128")
+    if render_node.exists():
+        render_gid = render_node.stat().st_gid
+        if render_gid not in groups:
+            groups.append(render_gid)
+
+
+def _add_audio_support(mounts: list[Mount]) -> None:
+    """Mount audio sockets (PipeWire and/or PulseAudio).
+
+    On PipeWire systems, both the native socket and the PulseAudio compatibility
+    socket are mounted so that both PipeWire-native and PulseAudio clients work.
+    On WSL2, the WSLg PulseAudio socket is used.
+    """
+    if not is_linux():
+        if is_macos():
+            logger.warning("Audio passthrough not supported on macOS")
+        return
+
+    found = False
+    xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+
+    if xdg_runtime_dir:
+        # PipeWire native socket
+        pipewire_socket = Path(xdg_runtime_dir) / "pipewire-0"
+        if pipewire_socket.exists():
+            mounts.append(Mount(str(pipewire_socket), str(pipewire_socket)))
+            found = True
+
+        # PulseAudio socket (standalone or PipeWire compatibility layer via pipewire-pulse)
+        pulse_socket = Path(xdg_runtime_dir) / "pulse" / "native"
+        if pulse_socket.exists():
+            mounts.append(Mount(str(pulse_socket), str(pulse_socket)))
+            found = True
+
+    # WSLg PulseAudio socket fallback
+    if not found and is_wsl() and _WSLG_PULSE_SERVER.exists():
+        mounts.append(Mount(str(_WSLG_PULSE_SERVER), str(_WSLG_PULSE_SERVER), read_only=True))
+        found = True
+
+    if not found:
+        logger.warning(
+            "No audio socket found (PipeWire/PulseAudio), audio won't work inside sandbox"
+        )
 
 
 def _add_mise_support(mounts: list[Mount]) -> None:
@@ -477,9 +608,17 @@ def _build_environment(
         env["GIT_CONFIG_KEY_0"] = "gpg.ssh.program"
         env["GIT_CONFIG_VALUE_0"] = "ssh-keygen"
 
-    # Clipboard support (forward display env vars)
-    if config.clipboard:
-        _add_clipboard_environment(env)
+    # Display or clipboard support (forward display env vars)
+    if config.display or config.clipboard:
+        _add_display_environment(env)
+
+    # D-Bus support
+    if config.dbus:
+        _add_dbus_environment(env)
+
+    # Audio support
+    if config.audio:
+        _add_audio_environment(env)
 
     # User-defined env
     env.update(config.env)
@@ -487,10 +626,11 @@ def _build_environment(
     return env
 
 
-def _add_clipboard_environment(env: dict[str, str]) -> None:
-    """Forward display-related environment variables for clipboard tools.
+def _add_display_environment(env: dict[str, str]) -> None:
+    """Forward display-related environment variables for GUI/clipboard tools.
 
     Only applies on Linux where display servers are available.
+    On WSL2, uses WSLg runtime dir if XDG_RUNTIME_DIR is not set.
     """
     if not is_linux():
         return
@@ -500,10 +640,46 @@ def _add_clipboard_environment(env: dict[str, str]) -> None:
         env["WAYLAND_DISPLAY"] = wayland_display
     if xdg_runtime_dir := os.environ.get("XDG_RUNTIME_DIR"):
         env["XDG_RUNTIME_DIR"] = xdg_runtime_dir
+    elif is_wsl() and _WSLG_RUNTIME_DIR.exists():
+        env["XDG_RUNTIME_DIR"] = str(_WSLG_RUNTIME_DIR)
 
-    # X11
+    # X11 (only set XAUTHORITY when DISPLAY is forwarded)
     if x_display := os.environ.get("DISPLAY"):
         env["DISPLAY"] = x_display
+        if xauthority := os.environ.get("XAUTHORITY"):
+            env["XAUTHORITY"] = xauthority
+        else:
+            default_xauth = Path.home() / ".Xauthority"
+            if default_xauth.exists():
+                env["XAUTHORITY"] = str(default_xauth)
+
+
+def _add_dbus_environment(env: dict[str, str]) -> None:
+    """Forward D-Bus environment variables."""
+    if not is_linux() or is_wsl():
+        return
+
+    if xdg_runtime_dir := os.environ.get("XDG_RUNTIME_DIR"):
+        env["XDG_RUNTIME_DIR"] = xdg_runtime_dir
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={xdg_runtime_dir}/bus"
+
+
+def _add_audio_environment(env: dict[str, str]) -> None:
+    """Forward audio-related environment variables."""
+    if not is_linux():
+        return
+
+    if xdg_runtime_dir := os.environ.get("XDG_RUNTIME_DIR"):
+        env["XDG_RUNTIME_DIR"] = xdg_runtime_dir
+
+    # Set PULSE_SERVER when the PulseAudio socket exists (standalone or via pipewire-pulse)
+    if xdg_runtime_dir:
+        pulse_socket = Path(xdg_runtime_dir) / "pulse" / "native"
+        if pulse_socket.exists():
+            env["PULSE_SERVER"] = str(pulse_socket)
+            return
+    if is_wsl() and _WSLG_PULSE_SERVER.exists():
+        env["PULSE_SERVER"] = str(_WSLG_PULSE_SERVER)
 
 
 def _parse_mount_spec(spec: str, project_dir: Path) -> Mount:
