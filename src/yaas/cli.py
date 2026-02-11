@@ -103,6 +103,15 @@ def run(
     clipboard: bool = typer.Option(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
+    display: bool = typer.Option(
+        False, "--display", help="Full display passthrough (read-write Wayland/X11 sockets)"
+    ),
+    dbus: bool = typer.Option(False, "--dbus", help="Mount D-Bus session bus socket"),
+    gpu: bool = typer.Option(False, "--gpu", help="GPU device passthrough"),
+    audio: bool = typer.Option(False, "--audio", help="Audio passthrough (PipeWire/PulseAudio)"),
+    gui: bool = typer.Option(
+        False, "--gui", help="Enable all GUI features (display + dbus + gpu + audio)"
+    ),
     network: str | None = typer.Option(
         None, "--network", help="Network mode: host, bridge, none"
     ),
@@ -120,23 +129,23 @@ def run(
     project_dir, worktree_name = _resolve_worktree(worktree)
     config = load_config(project_dir)
 
-    # CLI flags override config
-    if ssh_agent:
-        config.ssh_agent = True
-    if git_config:
-        config.git_config = True
-    if ai_config:
-        config.ai_config = True
-    if container_socket:
-        config.container_socket = True
-    if clipboard:
-        config.clipboard = True
-    if network:
-        config.network_mode = network
-    if memory:
-        config.resources.memory = memory
-    if cpus:
-        config.resources.cpus = cpus
+    # CLI flags override config — apply --gui first, then individual flags
+    _apply_cli_overrides(
+        config,
+        ssh_agent=ssh_agent,
+        git_config=git_config,
+        ai_config=ai_config,
+        container_socket=container_socket,
+        clipboard=clipboard,
+        display=display,
+        dbus=dbus,
+        gpu=gpu,
+        audio=audio,
+        gui=gui,
+        network=network,
+        memory=memory,
+        cpus=cpus,
+    )
 
     _run_container(config, project_dir, ctx.args, worktree_name, clone_url=clone, clone_ref=ref)
 
@@ -159,6 +168,15 @@ def shell(
     clipboard: bool = typer.Option(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
+    display: bool = typer.Option(
+        False, "--display", help="Full display passthrough (read-write Wayland/X11 sockets)"
+    ),
+    dbus: bool = typer.Option(False, "--dbus", help="Mount D-Bus session bus socket"),
+    gpu: bool = typer.Option(False, "--gpu", help="GPU device passthrough"),
+    audio: bool = typer.Option(False, "--audio", help="Audio passthrough (PipeWire/PulseAudio)"),
+    gui: bool = typer.Option(
+        False, "--gui", help="Enable all GUI features (display + dbus + gpu + audio)"
+    ),
     network: str | None = typer.Option(
         None, "--network", help="Network mode: host, bridge, none"
     ),
@@ -173,22 +191,22 @@ def shell(
     project_dir, worktree_name = _resolve_worktree(worktree)
     config = load_config(project_dir)
 
-    if ssh_agent:
-        config.ssh_agent = True
-    if git_config:
-        config.git_config = True
-    if ai_config:
-        config.ai_config = True
-    if container_socket:
-        config.container_socket = True
-    if clipboard:
-        config.clipboard = True
-    if network:
-        config.network_mode = network
-    if memory:
-        config.resources.memory = memory
-    if cpus:
-        config.resources.cpus = cpus
+    _apply_cli_overrides(
+        config,
+        ssh_agent=ssh_agent,
+        git_config=git_config,
+        ai_config=ai_config,
+        container_socket=container_socket,
+        clipboard=clipboard,
+        display=display,
+        dbus=dbus,
+        gpu=gpu,
+        audio=audio,
+        gui=gui,
+        network=network,
+        memory=memory,
+        cpus=cpus,
+    )
 
     _run_container(config, project_dir, ["bash"], worktree_name, clone_url=clone, clone_ref=ref)
 
@@ -222,6 +240,17 @@ def _create_tool_command(tool: str) -> None:
         clipboard: bool = typer.Option(
             False, "--clipboard", help="Enable clipboard access for image pasting"
         ),
+        display: bool = typer.Option(
+            False, "--display", help="Full display passthrough (read-write Wayland/X11 sockets)"
+        ),
+        dbus: bool = typer.Option(False, "--dbus", help="Mount D-Bus session bus socket"),
+        gpu: bool = typer.Option(False, "--gpu", help="GPU device passthrough"),
+        audio: bool = typer.Option(
+            False, "--audio", help="Audio passthrough (PipeWire/PulseAudio)"
+        ),
+        gui: bool = typer.Option(
+            False, "--gui", help="Enable all GUI features (display + dbus + gpu + audio)"
+        ),
         network: str | None = typer.Option(
             None, "--network", help="Network mode: host, bridge, none"
         ),
@@ -239,22 +268,22 @@ def _create_tool_command(tool: str) -> None:
         project_dir, worktree_name = _resolve_worktree(worktree)
         config = load_config(project_dir)
 
-        if ssh_agent:
-            config.ssh_agent = True
-        if git_config:
-            config.git_config = True
-        if ai_config:
-            config.ai_config = True
-        if container_socket:
-            config.container_socket = True
-        if clipboard:
-            config.clipboard = True
-        if network:
-            config.network_mode = network
-        if memory:
-            config.resources.memory = memory
-        if cpus:
-            config.resources.cpus = cpus
+        _apply_cli_overrides(
+            config,
+            ssh_agent=ssh_agent,
+            git_config=git_config,
+            ai_config=ai_config,
+            container_socket=container_socket,
+            clipboard=clipboard,
+            display=display,
+            dbus=dbus,
+            gpu=gpu,
+            audio=audio,
+            gui=gui,
+            network=network,
+            memory=memory,
+            cpus=cpus,
+        )
 
         # Build command with YOLO flags (unless --no-yolo)
         command = [tool]
@@ -287,6 +316,10 @@ def config_cmd() -> None:
     console.print(f"[bold]ai_config:[/] {cfg.ai_config}")
     console.print(f"[bold]container_socket:[/] {cfg.container_socket}")
     console.print(f"[bold]clipboard:[/] {cfg.clipboard}")
+    console.print(f"[bold]display:[/] {cfg.display}")
+    console.print(f"[bold]dbus:[/] {cfg.dbus}")
+    console.print(f"[bold]gpu:[/] {cfg.gpu}")
+    console.print(f"[bold]audio:[/] {cfg.audio}")
     console.print(f"[bold]network_mode:[/] {cfg.network_mode}")
     console.print(f"[bold]readonly_project:[/] {cfg.readonly_project}")
     console.print("\n[bold]Auto-update:[/]")
@@ -485,6 +518,57 @@ def _run_clone_workflow(
             console.print("[dim]Run 'podman/docker volume rm' to clean up manually[/]")
 
     raise typer.Exit(exit_code)
+
+
+def _apply_cli_overrides(
+    config: Config,
+    *,
+    ssh_agent: bool,
+    git_config: bool,
+    ai_config: bool,
+    container_socket: bool,
+    clipboard: bool,
+    display: bool,
+    dbus: bool,
+    gpu: bool,
+    audio: bool,
+    gui: bool,
+    network: str | None,
+    memory: str | None,
+    cpus: float | None,
+) -> None:
+    """Apply CLI flag overrides to config. --gui is applied first, then individual flags."""
+    # --gui enables all GUI features
+    if gui:
+        config.display = True
+        config.dbus = True
+        config.gpu = True
+        config.audio = True
+
+    if ssh_agent:
+        config.ssh_agent = True
+    if git_config:
+        config.git_config = True
+    if ai_config:
+        config.ai_config = True
+    if container_socket:
+        config.container_socket = True
+    if clipboard:
+        config.clipboard = True
+    if display:
+        config.display = True
+    if dbus:
+        config.dbus = True
+    if gpu:
+        config.gpu = True
+    if audio:
+        config.audio = True
+    if network:
+        config.network_mode = network
+    if memory:
+        config.resources.memory = memory
+    if cpus:
+        config.resources.cpus = cpus
 
 
 def _run_container(
