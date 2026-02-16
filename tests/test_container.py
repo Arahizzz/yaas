@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from yaas.config import Config
-from yaas.constants import CLONE_WORKSPACE, NIX_VOLUME, RUNTIME_IMAGE
+from yaas.constants import CLONE_WORKSPACE, HOME_VOLUME, NIX_VOLUME, RUNTIME_IMAGE
 from yaas.container import (
     _add_worktree_mounts,
     _parse_mount_spec,
@@ -75,6 +75,16 @@ class TestBuildContainerSpec:
         assert spec.memory == "16g"
         assert spec.cpus == 4.0
         assert spec.pids_limit == 500
+
+    def test_home_volume_mounted(self, mock_linux, project_dir, clean_env) -> None:
+        """Test that home volume is mounted at /home for persistence."""
+        config = Config()
+        spec = build_container_spec(config, project_dir, ["bash"])
+        home_mount = next(
+            (m for m in spec.mounts if m.target == "/home" and m.type == "volume"), None
+        )
+        assert home_mount is not None
+        assert home_mount.source == HOME_VOLUME
 
     def test_nix_volume_mounted(self, mock_linux, project_dir, clean_env) -> None:
         """Test that Nix volume is mounted for package persistence."""
@@ -434,6 +444,16 @@ class TestBuildCloneWorkSpec:
         )
         assert volume_mount is not None
         assert volume_mount.target == CLONE_WORKSPACE
+
+    def test_home_volume_mounted(self, mock_linux, project_dir, clean_env) -> None:
+        """Test that clone work spec includes home volume."""
+        config = Config()
+        spec = build_clone_work_spec(config, "yaas-clone-abc123", "repo", ["bash"])
+        home_mount = next(
+            (m for m in spec.mounts if m.target == "/home" and m.type == "volume"), None
+        )
+        assert home_mount is not None
+        assert home_mount.source == HOME_VOLUME
 
     def test_nix_volume_mounted(self, mock_linux, project_dir, clean_env) -> None:
         """Test that clone work spec includes Nix volume."""

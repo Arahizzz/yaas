@@ -11,9 +11,8 @@ from rich.console import Console
 
 from .config import Config, load_config
 from .constants import (
-    CACHE_VOLUME,
     CLONE_VOLUME_PREFIX,
-    MISE_DATA_VOLUME,
+    HOME_VOLUME,
     NIX_VOLUME,
     RUNTIME_IMAGE,
     TOOL_SHORTCUTS,
@@ -313,11 +312,15 @@ app.command(name="config")(config_cmd)
 def reset_volumes(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
-    """Reset yaas volumes (removes installed tools and cache)."""
-    volumes = [MISE_DATA_VOLUME, CACHE_VOLUME, NIX_VOLUME]
+    """Reset yaas volumes (removes home directory, tools, cache, and Nix store)."""
+    volumes = [HOME_VOLUME, NIX_VOLUME]
 
     if not force:
-        console.print("[yellow]This will delete all installed tools and cache.[/]")
+        console.print(
+            "[yellow]This will delete the entire persistent home directory"
+            " (shell history, dotfiles, mise tools, cache, and tool configs)"
+            " and the Nix store.[/]"
+        )
         console.print(f"Volumes: {', '.join(volumes)}")
         confirm = typer.confirm("Continue?")
         if not confirm:

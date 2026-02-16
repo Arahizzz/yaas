@@ -10,10 +10,9 @@ from pathlib import Path
 from .config import Config
 from .constants import (
     API_KEYS,
-    CACHE_VOLUME,
     CLONE_WORKSPACE,
+    HOME_VOLUME,
     MISE_CONFIG_PATH,
-    MISE_DATA_VOLUME,
     NIX_VOLUME,
     RUNTIME_IMAGE,
 )
@@ -360,7 +359,14 @@ def _add_optional_mounts(
     home: Path,
     sandbox_home: str,
 ) -> None:
-    """Add optional mounts based on config (git, AI, SSH, clipboard, mise)."""
+    """Add optional mounts based on config (git, AI, SSH, clipboard, mise).
+
+    Order matters: the home volume must be mounted first so that subsequent
+    bind mounts for config files overlay on top of it.
+    """
+    # Home volume first — bind mounts below overlay specific paths within it
+    _add_mise_support(mounts)
+
     if config.git_config:
         _add_config_mounts(mounts, home, sandbox_home, [".gitconfig", ".config/git"])
 
@@ -391,8 +397,6 @@ def _add_optional_mounts(
 
     if config.clipboard:
         _add_clipboard_support(mounts)
-
-    _add_mise_support(mounts)
 
 
 def _add_ssh_agent(mounts: list[Mount]) -> None:
@@ -468,8 +472,7 @@ def _add_mise_support(mounts: list[Mount]) -> None:
     sandbox_home = "/home"
 
     # Named volumes for persistence between runs
-    mounts.append(Mount(MISE_DATA_VOLUME, f"{sandbox_home}/.local/share/mise", type="volume"))
-    mounts.append(Mount(CACHE_VOLUME, f"{sandbox_home}/.cache", type="volume"))
+    mounts.append(Mount(HOME_VOLUME, sandbox_home, type="volume"))
     mounts.append(Mount(NIX_VOLUME, "/nix", type="volume"))
 
     # Ensure config directory exists

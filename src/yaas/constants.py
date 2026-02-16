@@ -17,8 +17,7 @@ WORKTREES_DIR = DATA_DIR / "worktrees"
 RUNTIME_IMAGE = os.getenv("YAAS_RUNTIME_IMAGE", "ghcr.io/arahizzz/yaas/runtime:0.x-latest")
 
 # Container volumes for persistence
-MISE_DATA_VOLUME = "yaas-data"  # ~/.local/share/mise (tools)
-CACHE_VOLUME = "yaas-cache"  # ~/.cache (general cache)
+HOME_VOLUME = "yaas-home"  # /home (entire home directory)
 NIX_VOLUME = "yaas-nix"  # /nix (Nix store and database)
 
 # Clone feature constants

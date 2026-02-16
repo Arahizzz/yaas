@@ -247,7 +247,7 @@ YAAS uses [mise](https://mise.jdx.dev/) to manage tools inside the container. Th
 
 ### How It Works
 
-On first run, YAAS creates a default mise configuration at `~/.config/yaas/mise.toml`. Tool installations are stored in named volumes (`yaas-data`, `yaas-cache`, and `yaas-nix`), so they persist across sessions.
+On first run, YAAS creates a default mise configuration at `~/.config/yaas/mise.toml`. Tool installations are stored in named volumes (`yaas-home` and `yaas-nix`), so they persist across sessions.
 
 By default, YAAS runs `mise upgrade` on each container start to keep tools current. You can disable this by setting `auto_upgrade_tools = false` in your config.
 
@@ -322,8 +322,7 @@ This means files created inside the container have correct ownership on the host
 
 YAAS uses named volumes to persist data across container sessions:
 
-- `yaas-data` stores mise tool installations (`~/.local/share/mise`)
-- `yaas-cache` stores general cache data (`~/.cache`)
+- `yaas-home` persists the entire home directory (`/home`), including mise tool installations, cache, shell history, and tool-specific configs
 - `yaas-nix` stores the Nix store and database (`/nix`)
 
 This is why tools installed via mise don't need to be reinstalled every time you start a new container. Running `yaas reset-volumes` deletes these volumes, which will trigger a fresh tool installation on the next run.
