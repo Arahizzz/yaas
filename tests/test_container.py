@@ -96,12 +96,18 @@ class TestBuildContainerSpec:
         assert nix_mount is not None
         assert nix_mount.source == NIX_VOLUME
 
-    def test_macos_no_passwd_mount(self, mock_macos, project_dir, clean_env) -> None:
-        """Test that /etc/passwd is not mounted on non-Linux (macOS)."""
+    def test_no_passwd_mount_on_linux(self, mock_linux, project_dir, clean_env) -> None:
+        """Test that /etc/passwd and /etc/group are not mounted (user created in entrypoint)."""
         config = Config()
-
         spec = build_container_spec(config, project_dir, ["bash"])
+        mount_sources = [m.source for m in spec.mounts]
+        assert "/etc/passwd" not in mount_sources
+        assert "/etc/group" not in mount_sources
 
+    def test_no_passwd_mount_on_macos(self, mock_macos, project_dir, clean_env) -> None:
+        """Test that /etc/passwd and /etc/group are not mounted on macOS."""
+        config = Config()
+        spec = build_container_spec(config, project_dir, ["bash"])
         mount_sources = [m.source for m in spec.mounts]
         assert "/etc/passwd" not in mount_sources
         assert "/etc/group" not in mount_sources

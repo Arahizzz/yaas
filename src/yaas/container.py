@@ -100,11 +100,6 @@ def build_clone_spec(
 
     mounts: list[Mount] = []
 
-    # UID/GID passthrough on Linux
-    if is_linux():
-        mounts.append(Mount("/etc/passwd", "/etc/passwd", read_only=True))
-        mounts.append(Mount("/etc/group", "/etc/group", read_only=True))
-
     # Mount the clone volume at workspace
     mounts.append(Mount(clone_volume, CLONE_WORKSPACE, type="volume"))
 
@@ -223,11 +218,6 @@ def build_clone_work_spec(
     mounts: list[Mount] = []
     groups: list[int] = []
 
-    # UID/GID passthrough on Linux
-    if is_linux():
-        mounts.append(Mount("/etc/passwd", "/etc/passwd", read_only=True))
-        mounts.append(Mount("/etc/group", "/etc/group", read_only=True))
-
     # Mount clone volume at /workspace
     mounts.append(Mount(clone_volume, CLONE_WORKSPACE, type="volume"))
 
@@ -322,12 +312,6 @@ def _build_mounts(
     """Assemble all mounts and supplementary groups."""
     mounts: list[Mount] = []
     groups: list[int] = []
-
-    # UID/GID passthrough - mount passwd/group so user is recognized
-    # Only on Linux - macOS Docker Desktop handles this differently
-    if is_linux():
-        mounts.append(Mount("/etc/passwd", "/etc/passwd", read_only=True))
-        mounts.append(Mount("/etc/group", "/etc/group", read_only=True))
 
     # Add worktree mounts (may signal to skip the project_dir mount)
     skip_project_mount = _add_worktree_mounts(mounts, project_dir, config.readonly_project)

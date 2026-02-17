@@ -156,7 +156,7 @@ class PodmanRuntime:
         # readable and YOLO flags work (Claude blocks them for root).
         cmd.append("--userns=keep-id")
 
-        # Disable SELinux label confinement (needed for /etc/passwd mount)
+        # Disable SELinux label confinement (needed for bind mounts: project dir, configs, sockets)
         cmd.extend(["--security-opt", "label=disable"])
 
         # Interactive/TTY
