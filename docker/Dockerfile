@@ -31,8 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN echo "ALL ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd \
     && chmod 440 /etc/sudoers.d/nopasswd
 
-# Configure PAM for sudo to skip account validation (shadow file not available
-# when passwd/group are mounted from host but shadow isn't)
+# Configure PAM for sudo to skip account validation (shadow entry not available
+# for dynamically created container user)
 RUN echo -e "auth sufficient pam_permit.so\naccount sufficient pam_permit.so\nsession sufficient pam_permit.so" > /etc/pam.d/sudo
 
 # ============================================================

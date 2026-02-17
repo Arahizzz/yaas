@@ -1,6 +1,20 @@
 #!/bin/bash
 set -e
 
+# ============================================================
+# User setup (create passwd/group entry for host UID/GID)
+# ============================================================
+MY_UID=$(id -u)
+MY_GID=$(id -g)
+
+if ! getent group "$MY_GID" >/dev/null 2>&1; then
+    sudo groupadd -g "$MY_GID" yaas 2>/dev/null || true
+fi
+
+if ! getent passwd "$MY_UID" >/dev/null 2>&1; then
+    sudo useradd -u "$MY_UID" -g "$MY_GID" -d /home -s /bin/bash -M yaas 2>/dev/null || true
+fi
+
 # Add local bin to PATH if not already there
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     export PATH="$HOME/.local/bin:$PATH"
