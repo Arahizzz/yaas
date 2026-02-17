@@ -43,7 +43,7 @@ YAAS should work on macOS with Docker Desktop, but has not been thoroughly teste
 - **File ownership**: Docker Desktop handles file ownership through its file sharing layer (VirtioFS), so files created in containers should be owned by your macOS user.
 - **Podman**: Not supported on macOS.
 - **Clipboard**: Direct clipboard access is not available. Display server sockets (Wayland/X11) don't exist on macOS.
-- **UID passthrough**: The `/etc/passwd` mount is skipped on macOS since Docker Desktop handles user mapping differently.
+- **UID passthrough**: Docker Desktop handles user mapping through its VM layer, so explicit UID passthrough is not needed.
 
 ### Windows (Experimental)
 
@@ -301,22 +301,21 @@ yaas reset-volumes
 
 ### UID Passthrough (Linux)
 
-Traditional container sandboxes run processes as root or a fixed UID, which causes file permission problems when the container writes to mounted directories. On **Linux**, YAAS mounts `/etc/passwd` and `/etc/group` from the host and runs the container process with your actual UID:
+Traditional container sandboxes run processes as root or a fixed UID, which causes file permission problems when the container writes to mounted directories. On **Linux**, YAAS runs the container process with your actual UID/GID and creates a matching user inside the container at startup:
 
 ```
 Host (Linux)                      Container
 ──────────────────────────────────────────────────────────────
-/etc/passwd (ro) ─────────────────> /etc/passwd
-/etc/group (ro)  ─────────────────> /etc/group
 --user 1000:1000 ─────────────────> Process runs as UID 1000
+                                    Entrypoint creates user "yaas" (1000:1000)
 
 ~/projects/myapp ─────────────────> ~/projects/myapp (rw)
                                     ↳ Files created with UID 1000 ✓
 ```
 
-This means files created inside the container have correct ownership on the host. Config files like `.gitconfig` and `.claude` can be mounted directly instead of copied. Container sockets also work properly for docker-in-docker scenarios.
+This means files created inside the container have correct ownership on the host. Config files like `.gitconfig` and `.claude` can be mounted directly instead of copied. Container sockets also work properly for docker-in-docker scenarios. Since the container's `/etc/passwd` is not bind-mounted from the host, you can freely `apt install` packages that need to create system users.
 
-**Note:** On macOS, Docker Desktop handles file ownership through its file sharing layer (VirtioFS), so files created in containers should be owned by your macOS user without explicit UID passthrough. YAAS skips the `/etc/passwd` mount on macOS since Docker Desktop manages this differently.
+**Note:** On macOS, Docker Desktop handles file ownership through its file sharing layer (VirtioFS), so files created in containers should be owned by your macOS user without explicit UID passthrough.
 
 ### Persistent Volumes
 
