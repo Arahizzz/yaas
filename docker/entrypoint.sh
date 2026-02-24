@@ -13,6 +13,10 @@ fi
 
 if ! getent passwd "$MY_UID" >/dev/null 2>&1; then
     sudo useradd -u "$MY_UID" -g "$MY_GID" -d /home -s /bin/bash -M yaas 2>/dev/null || true
+else
+    # Fix home directory for users auto-created by --userns=keep-id
+    # (podman sets home to workdir; SSH uses getpwuid, not $HOME)
+    sudo usermod -d /home "$(id -un)" 2>/dev/null || true
 fi
 
 # Add local bin to PATH if not already there
