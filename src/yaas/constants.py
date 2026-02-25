@@ -43,24 +43,4 @@ API_KEYS = [
     "OPENROUTER_API_KEY",
 ]
 
-# Config directories to mount directly (relative to $HOME)
-CONFIG_MOUNTS = {
-    ".claude": "Claude Code config",
-    ".codex": "Codex config",
-    ".gemini": "Gemini config",
-    ".opencode": "OpenCode config",
-    ".gitconfig": "Git config (file)",
-    ".config/git": "Git XDG config (dir)",
-}
-
-# Tool shortcuts (yaas claude → runs claude)
-TOOL_SHORTCUTS = ["claude", "codex", "gemini", "opencode"]
-
-# YOLO flags for each tool (auto-approve all tool calls)
-TOOL_YOLO_FLAGS: dict[str, list[str]] = {
-    "claude": ["--dangerously-skip-permissions"],
-    "codex": ["--dangerously-bypass-approvals-and-sandbox"],
-    "gemini": ["--yolo"],
-    "opencode": [],
-}
 

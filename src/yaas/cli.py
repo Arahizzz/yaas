@@ -9,14 +9,12 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from .config import Config, load_config
+from .config import Config, ToolConfig, load_config, load_tool_commands
 from .constants import (
     CLONE_VOLUME_PREFIX,
     HOME_VOLUME,
     NIX_VOLUME,
     RUNTIME_IMAGE,
-    TOOL_SHORTCUTS,
-    TOOL_YOLO_FLAGS,
 )
 from .container import (
     build_clone_spec,
@@ -193,8 +191,8 @@ def shell(
     _run_container(config, project_dir, ["bash"], worktree_name, clone_url=clone, clone_ref=ref)
 
 
-def _create_tool_command(tool: str) -> None:
-    """Create a tool-specific command (claude, codex, etc.)."""
+def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
+    """Create a tool-specific command (claude, aider, etc.)."""
 
     @app.command(
         name=tool,
@@ -257,22 +255,37 @@ def _create_tool_command(tool: str) -> None:
             config.resources.cpus = cpus
 
         # Build command with YOLO flags (unless --no-yolo)
-        command = [tool]
-        if not no_yolo:
-            command.extend(TOOL_YOLO_FLAGS.get(tool, []))
+        tc = config.tools.get(tool)
+        command = list(tc.command) if tc and tc.command else [tool]
+        if not no_yolo and tc:
+            command.extend(tc.yolo_flags)
         command.extend(ctx.args)
 
         _run_container(config, project_dir, command, worktree_name, clone_url=clone, clone_ref=ref)
 
-    # Update docstring
-    tool_command.__doc__ = (
-        f"Run {tool} in sandbox with YOLO mode (auto-confirm). Extra args passed to {tool}."
-    )
+    # Build descriptive help text from tool config
+    cmd_name = " ".join(tool_config.command) if tool_config.command else tool
+    parts = [f"Run `{cmd_name}` in sandbox."]
+    if tool_config.yolo_flags:
+        parts.append(f"YOLO: {' '.join(tool_config.yolo_flags)}")
+    if tool_config.config_paths:
+        parts.append(f"Config: {', '.join(tool_config.config_paths)}")
+    tool_command.__doc__ = " ".join(parts)
 
 
-# Register tool shortcuts
-for _tool in TOOL_SHORTCUTS:
-    _create_tool_command(_tool)
+# Reserved command names that tools cannot override
+_RESERVED_COMMANDS = {
+    "run", "shell", "config", "config-cmd", "reset-volumes",
+    "cleanup-clones", "pull-image", "upgrade-tools", "worktree",
+}
+
+# Register tool commands from config
+_tools = load_tool_commands()
+for _tool_name, _tool_config in _tools.items():
+    if _tool_name in _RESERVED_COMMANDS:
+        logger.warning("Tool '%s' conflicts with built-in command, skipping", _tool_name)
+        continue
+    _create_tool_command(_tool_name, _tool_config)
 
 
 @app.command()
@@ -298,6 +311,16 @@ def config_cmd() -> None:
     console.print(f"  memory: {cfg.resources.memory}")
     console.print(f"  cpus: {cfg.resources.cpus or 'unlimited'}")
     console.print(f"  pids_limit: {cfg.resources.pids_limit}")
+    if cfg.tools:
+        console.print("\n[bold]Tools:[/]")
+        for name, tc in sorted(cfg.tools.items()):
+            console.print(f"  [bold]{name}:[/]")
+            if tc.command:
+                console.print(f"    command: {tc.command}")
+            if tc.yolo_flags:
+                console.print(f"    yolo_flags: {tc.yolo_flags}")
+            if tc.config_paths:
+                console.print(f"    config_paths: {tc.config_paths}")
     if cfg.mounts:
         console.print(f"\n[bold]Custom mounts:[/] {cfg.mounts}")
     if cfg.env:
