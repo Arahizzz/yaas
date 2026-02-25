@@ -106,8 +106,8 @@ YAAS options must come first. Any unrecognized options are passed through to the
 
 ```bash
 # YAAS options first, then tool options
-yaas claude --ssh-agent --git-config --print "Fix the bug"
-#           ^^^^^^^^^^^ ^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^^
+yaas claude --ssh-agent --git-config -p "Fix the bug"
+#           ^^^^^^^^^^^ ^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^^
 #           yaas options             passed to claude
 ```
 
@@ -206,7 +206,6 @@ runtime = "podman"
 # Feature flags
 ssh_agent = true           # Forward SSH agent socket
 git_config = true          # Mount .gitconfig and .config/git
-ai_config = true           # Mount AI tool configs (.claude, .codex, .gemini, etc.)
 container_socket = false   # Mount docker/podman socket for docker-in-docker
 clipboard = false          # Enable clipboard access for image pasting
 
@@ -219,9 +218,6 @@ pid_mode = "host"          # PID namespace: "host" or isolated (default, omit)
 auto_pull_image = true     # Pull container image on startup
 auto_upgrade_tools = true  # Run mise upgrade on startup
 
-# Security
-forward_api_keys = true    # Forward API keys (ANTHROPIC_API_KEY, etc.) to container
-
 # Resource limits
 [resources]
 memory = "8g"              # Memory limit (e.g., "4g", "512m")
@@ -229,27 +225,44 @@ memory_swap = "8g"         # Swap limit (set equal to memory to disable swap)
 cpus = 4.0                 # CPU limit
 pids_limit = 1000          # Maximum number of processes (prevents fork bombs)
 
-# Custom mounts in "source:target:mode" format
+# Global mounts — always applied, in "source:target:mode" format
 mounts = [
     "~/datasets:/data:ro",
     "/var/log/app:/logs"
 ]
 
-# Custom environment variables
+# Global environment variables — always forwarded
+# true = forward from host, "value" = hardcoded
 [env]
+GITHUB_TOKEN = true
 MY_VAR = "value"
 ```
 
-### Environment Variables
+### Tool Configuration
 
-The following API keys are automatically forwarded to the container if they're set in your environment (disable with `forward_api_keys = false`):
+Each tool can declare its own `mounts` and `env`. These are **only applied when running that specific tool** (e.g. `yaas claude`), not for `yaas run` or `yaas shell`.
 
-- `ANTHROPIC_API_KEY`
-- `OPENAI_API_KEY`
-- `GEMINI_API_KEY` / `GOOGLE_API_KEY`
-- `GITHUB_TOKEN` / `GH_TOKEN`
-- `COPILOT_GITHUB_TOKEN`
-- `OPENROUTER_API_KEY`
+```toml
+[tools.claude]
+command = ["claude"]                        # Executable (default: tool name)
+yolo_flags = ["--dangerously-skip-permissions"]  # Appended in YOLO mode
+mounts = [".claude", ".claude.json", ".claude/ide:ro"]
+env = { ANTHROPIC_API_KEY = true }
+
+[tools.codex]
+yolo_flags = ["--dangerously-bypass-approvals-and-sandbox"]
+mounts = [".codex"]
+env = { OPENAI_API_KEY = true }
+```
+
+**Mount format:**
+- `.claude` → mounts `~/.claude` to the same path in the sandbox (read-write)
+- `.claude:ro` → same but read-only
+- `~/a:/data:ro` → explicit `source:destination:mode`
+
+**Env format:**
+- `KEY = true` → forward `KEY` from the host environment (skipped if unset)
+- `KEY = "value"` → set `KEY` to a hardcoded value
 
 ## Mise Integration
 
@@ -361,11 +374,11 @@ Since macOS doesn't have display server sockets, direct clipboard access isn't p
 
 YAAS provides filesystem and resource isolation, but it intentionally mounts sensitive files to make AI agents useful. You should understand what you're exposing:
 
-- **AI configs** (`ai_config`): Mounts `.claude`, `.codex`, `.gemini`, and similar directories. These may contain conversation history, cached credentials, or API keys.
+- **Tool mounts** (`mounts` in `[tools.*]`): Mounts tool-specific config dirs like `.claude`, `.codex`, `.gemini`. These may contain conversation history, cached credentials, or API keys. Only applied for the active tool.
 - **Git config** (`git_config`): Mounts `.gitconfig` which may include credentials or credential helpers.
 - **SSH agent** (`ssh_agent`): Forwards your SSH agent socket. The agent can use your SSH keys to authenticate to remote servers.
 - **Container socket** (`container_socket`): Mounts the Docker/Podman socket. This effectively gives the container root-equivalent access to your system.
-- **API keys** (`forward_api_keys`): Environment variables like `ANTHROPIC_API_KEY` are forwarded by default. The agent can use these to make API calls. Set `forward_api_keys = false` to disable.
+- **API keys** (`env` in `[tools.*]`): Keys like `ANTHROPIC_API_KEY` are forwarded only for the specific tool that declares them. No keys are forwarded for `yaas run` or `yaas shell` unless declared in the global `[env]`.
 
 The sandbox prevents the agent from accessing arbitrary files on your system, but anything you mount is fully accessible. If you're running untrusted code, consider disabling these options.
 
