@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from .completions import NetworkMode, complete_worktree
 from .config import Config, ToolConfig, load_config, load_tool_commands
 from .constants import (
     CLONE_VOLUME_PREFIX,
@@ -85,7 +86,9 @@ def main_callback() -> None:
 )
 def run(
     ctx: typer.Context,
-    worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
+    worktree: str | None = typer.Option(
+        None, "--worktree", "-w", help="Run in worktree", autocompletion=complete_worktree
+    ),
     clone: str | None = typer.Option(
         None, "--clone", help="Clone git repo into ephemeral volume"
     ),
@@ -101,9 +104,7 @@ def run(
     clipboard: bool = typer.Option(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
-    network: str | None = typer.Option(
-        None, "--network", help="Network mode: host, bridge, none"
-    ),
+    network: NetworkMode | None = typer.Option(None, "--network", help="Network mode"),
     memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
 ) -> None:
@@ -129,8 +130,8 @@ def run(
         config.container_socket = True
     if clipboard:
         config.clipboard = True
-    if network:
-        config.network_mode = network
+    if network is not None:
+        config.network_mode = network.value
     if memory:
         config.resources.memory = memory
     if cpus:
@@ -141,7 +142,9 @@ def run(
 
 @app.command()
 def shell(
-    worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
+    worktree: str | None = typer.Option(
+        None, "--worktree", "-w", help="Run in worktree", autocompletion=complete_worktree
+    ),
     clone: str | None = typer.Option(
         None, "--clone", help="Clone git repo into ephemeral volume"
     ),
@@ -157,9 +160,7 @@ def shell(
     clipboard: bool = typer.Option(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
-    network: str | None = typer.Option(
-        None, "--network", help="Network mode: host, bridge, none"
-    ),
+    network: NetworkMode | None = typer.Option(None, "--network", help="Network mode"),
     memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
 ) -> None:
@@ -181,8 +182,8 @@ def shell(
         config.container_socket = True
     if clipboard:
         config.clipboard = True
-    if network:
-        config.network_mode = network
+    if network is not None:
+        config.network_mode = network.value
     if memory:
         config.resources.memory = memory
     if cpus:
@@ -204,7 +205,9 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
     )
     def tool_command(
         ctx: typer.Context,
-        worktree: str | None = typer.Option(None, "--worktree", "-w", help="Run in worktree"),
+        worktree: str | None = typer.Option(
+            None, "--worktree", "-w", help="Run in worktree", autocompletion=complete_worktree
+        ),
         clone: str | None = typer.Option(
             None, "--clone", help="Clone git repo into ephemeral volume"
         ),
@@ -220,9 +223,7 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
         clipboard: bool = typer.Option(
             False, "--clipboard", help="Enable clipboard access for image pasting"
         ),
-        network: str | None = typer.Option(
-            None, "--network", help="Network mode: host, bridge, none"
-        ),
+        network: NetworkMode | None = typer.Option(None, "--network", help="Network mode"),
         no_yolo: bool = typer.Option(False, "--no-yolo", help="Disable auto-confirm mode"),
         memory: str | None = typer.Option(
             None, "--memory", "-m", help="Memory limit (e.g., 8g)"
@@ -247,8 +248,8 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
             config.container_socket = True
         if clipboard:
             config.clipboard = True
-        if network:
-            config.network_mode = network
+        if network is not None:
+            config.network_mode = network.value
         if memory:
             config.resources.memory = memory
         if cpus:
@@ -627,7 +628,9 @@ def worktree_list() -> None:
 
 @worktree_app.command(name="path")
 def worktree_path(
-    name: str = typer.Argument(..., help="Name of the worktree"),
+    name: str = typer.Argument(
+        ..., help="Name of the worktree", autocompletion=complete_worktree
+    ),
 ) -> None:
     """Print the filesystem path of a worktree."""
     try:
@@ -644,7 +647,9 @@ def worktree_path(
 
 @worktree_app.command(name="remove")
 def worktree_remove(
-    name: str = typer.Argument(..., help="Name of the worktree to remove"),
+    name: str = typer.Argument(
+        ..., help="Name of the worktree to remove", autocompletion=complete_worktree
+    ),
     force: bool = typer.Option(False, "--force", "-f", help="Force removal even with changes"),
 ) -> None:
     """Remove a worktree."""
