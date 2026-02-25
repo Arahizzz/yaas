@@ -12,6 +12,7 @@ from yaas.constants import CLONE_WORKSPACE, HOME_VOLUME, NIX_VOLUME, RUNTIME_IMA
 from yaas.container import (
     _add_worktree_mounts,
     _parse_mount_spec,
+    _parse_tool_mount,
     build_clone_spec,
     build_clone_work_spec,
     build_container_spec,
@@ -44,15 +45,15 @@ class TestBuildContainerSpec:
             "USER": "testuser",
             "TERM": "xterm-256color",
             "COLORTERM": "truecolor",
-            "ANTHROPIC_API_KEY": "test-key-123",
         }
         with patch.dict(os.environ, env):
             spec = build_container_spec(config, project_dir, ["bash"])
 
         assert spec.environment["TERM"] == "xterm-256color"
-        assert spec.environment["ANTHROPIC_API_KEY"] == "test-key-123"
         assert spec.environment["YAAS"] == "1"
         assert spec.environment["COLORTERM"] == "truecolor"
+        # API keys are no longer auto-forwarded globally
+        assert "ANTHROPIC_API_KEY" not in spec.environment
 
     def test_network_isolation(self, mock_linux, project_dir, clean_env) -> None:
         """Test network isolation setting."""
@@ -145,6 +146,55 @@ class TestParseMountSpec:
 
         assert mount.source.startswith(str(Path.home()))
         assert mount.target == "/data"
+
+
+class TestParseToolMount:
+    """Tests for _parse_tool_mount function."""
+
+    def test_home_relative(self, tmp_path: Path) -> None:
+        """Test parsing home-relative mount spec like '.claude'."""
+        home = tmp_path / "home"
+        mount = _parse_tool_mount(".claude", home, "/home")
+
+        assert mount.source == str(home / ".claude")
+        assert mount.target == "/home/.claude"
+        assert mount.read_only is False
+
+    def test_home_relative_readonly(self, tmp_path: Path) -> None:
+        """Test parsing home-relative mount with :ro like '.claude:ro'."""
+        home = tmp_path / "home"
+        mount = _parse_tool_mount(".claude:ro", home, "/home")
+
+        assert mount.source == str(home / ".claude")
+        assert mount.target == "/home/.claude"
+        assert mount.read_only is True
+
+    def test_explicit_src_dst(self, tmp_path: Path) -> None:
+        """Test parsing explicit src:dst mount like '~/a:/data'."""
+        home = tmp_path / "home"
+        mount = _parse_tool_mount("~/a:/data", home, "/home")
+
+        assert mount.source == str(Path("~/a").expanduser())
+        assert mount.target == "/data"
+        assert mount.read_only is False
+
+    def test_explicit_src_dst_readonly(self, tmp_path: Path) -> None:
+        """Test parsing explicit src:dst:ro mount like '~/a:/data:ro'."""
+        home = tmp_path / "home"
+        mount = _parse_tool_mount("~/a:/data:ro", home, "/home")
+
+        assert mount.source == str(Path("~/a").expanduser())
+        assert mount.target == "/data"
+        assert mount.read_only is True
+
+    def test_nested_home_relative(self, tmp_path: Path) -> None:
+        """Test parsing nested home-relative path like '.claude/ide:ro'."""
+        home = tmp_path / "home"
+        mount = _parse_tool_mount(".claude/ide:ro", home, "/home")
+
+        assert mount.source == str(home / ".claude/ide")
+        assert mount.target == "/home/.claude/ide"
+        assert mount.read_only is True
 
 
 class TestClipboardSupport:
@@ -767,23 +817,22 @@ class TestWorktreeMountsIntegration:
         assert str(wt_base) not in sources
 
 
-class TestAiConfigMountsFromTools:
-    """Tests for AI config mounts derived from tools config."""
+class TestActiveToolScoping:
+    """Tests for active_tool mount and env scoping."""
 
-    def test_ai_config_mounts_from_tools(
+    def test_active_tool_mounts_applied(
         self, mock_linux, clean_env, tmp_path: Path
     ) -> None:
-        """ai_config=True mounts config_paths from configured tools."""
+        """active_tool set: tool's mounts are applied."""
         home = tmp_path / "home"
         home.mkdir()
         (home / ".claude").mkdir()
-        (home / ".aider").mkdir()
 
         config = Config()
-        config.ai_config = True
+        config.active_tool = "claude"
         config.tools = {
-            "claude": ToolConfig(config_paths=[".claude"]),
-            "aider": ToolConfig(config_paths=[".aider"]),
+            "claude": ToolConfig(mounts=[".claude"]),
+            "aider": ToolConfig(mounts=[".aider"]),
         }
 
         with patch("yaas.container.Path.home", return_value=home):
@@ -791,66 +840,103 @@ class TestAiConfigMountsFromTools:
 
         targets = [m.target for m in spec.mounts]
         sandbox_home = spec.environment.get("HOME", "/home/user")
+        # Active tool's mounts applied
         assert f"{sandbox_home}/.claude" in targets
-        assert f"{sandbox_home}/.aider" in targets
+        # Other tool's mounts NOT applied
+        assert f"{sandbox_home}/.aider" not in targets
 
-    def test_ai_config_deduplicates_paths(
+    def test_no_active_tool_no_tool_mounts(
         self, mock_linux, clean_env, tmp_path: Path
     ) -> None:
-        """Duplicate config_paths across tools are only mounted once."""
+        """active_tool=None: no tool mounts applied (run/shell mode)."""
         home = tmp_path / "home"
         home.mkdir()
-        (home / ".shared").mkdir()
+        (home / ".claude").mkdir()
 
         config = Config()
-        config.ai_config = True
+        config.active_tool = None
         config.tools = {
-            "tool1": ToolConfig(config_paths=[".shared"]),
-            "tool2": ToolConfig(config_paths=[".shared"]),
+            "claude": ToolConfig(mounts=[".claude"]),
         }
 
         with patch("yaas.container.Path.home", return_value=home):
             spec = build_container_spec(config, tmp_path, ["bash"])
 
+        targets = [m.target for m in spec.mounts]
         sandbox_home = spec.environment.get("HOME", "/home/user")
-        shared_mounts = [
-            m for m in spec.mounts if m.target == f"{sandbox_home}/.shared"
-        ]
-        assert len(shared_mounts) == 1
+        assert f"{sandbox_home}/.claude" not in targets
 
-    def test_ai_config_no_tools_no_mounts(
+    def test_active_tool_env_forwarded(
         self, mock_linux, clean_env, tmp_path: Path
     ) -> None:
-        """ai_config=True with empty tools produces no AI config mounts."""
+        """active_tool set: tool's env vars are applied."""
         config = Config()
-        config.ai_config = True
-        config.tools = {}
+        config.active_tool = "claude"
+        config.tools = {
+            "claude": ToolConfig(env={"ANTHROPIC_API_KEY": True, "CUSTOM": "val"}),
+        }
+
+        with patch.dict(os.environ, {"USER": "test", "ANTHROPIC_API_KEY": "sk-123"}):
+            spec = build_container_spec(config, tmp_path, ["bash"])
+
+        assert spec.environment["ANTHROPIC_API_KEY"] == "sk-123"
+        assert spec.environment["CUSTOM"] == "val"
+
+    def test_no_active_tool_no_tool_env(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """active_tool=None: tool env vars are NOT applied."""
+        config = Config()
+        config.active_tool = None
+        config.tools = {
+            "claude": ToolConfig(env={"ANTHROPIC_API_KEY": True}),
+        }
+
+        with patch.dict(os.environ, {"USER": "test", "ANTHROPIC_API_KEY": "sk-123"}):
+            spec = build_container_spec(config, tmp_path, ["bash"])
+
+        assert "ANTHROPIC_API_KEY" not in spec.environment
+
+    def test_global_env_always_applied(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Global env is applied regardless of active_tool."""
+        config = Config()
+        config.active_tool = None
+        config.env = {"GITHUB_TOKEN": True, "STATIC": "hello"}
+
+        with patch.dict(os.environ, {"USER": "test", "GITHUB_TOKEN": "ghp_123"}):
+            spec = build_container_spec(config, tmp_path, ["bash"])
+
+        assert spec.environment["GITHUB_TOKEN"] == "ghp_123"
+        assert spec.environment["STATIC"] == "hello"
+
+    def test_env_passthrough_missing_key_skipped(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Pass-through env var not set on host is skipped."""
+        config = Config()
+        config.active_tool = "claude"
+        config.tools = {
+            "claude": ToolConfig(env={"MISSING_KEY": True}),
+        }
 
         spec = build_container_spec(config, tmp_path, ["bash"])
 
-        # No AI config mounts should exist (exclude mise config mount)
-        sandbox_home = spec.environment.get("HOME", "/home/user")
-        ai_mounts = [
-            m for m in spec.mounts
-            if m.target.startswith(f"{sandbox_home}/.")
-            and m.type == "bind"
-            and "mise" not in m.target
-        ]
-        assert ai_mounts == []
+        assert "MISSING_KEY" not in spec.environment
 
-    def test_claude_ide_readonly_mount(
+    def test_tool_mount_readonly(
         self, mock_linux, clean_env, tmp_path: Path
     ) -> None:
-        """Claude IDE lock dir is mounted read-only when claude tool is configured."""
+        """Tool mount with :ro modifier is mounted read-only."""
         home = tmp_path / "home"
         home.mkdir()
-        (home / ".claude").mkdir()
-        (home / ".claude" / "ide").mkdir()
+        (home / ".claude" / "ide").mkdir(parents=True)
 
         config = Config()
-        config.ai_config = True
+        config.active_tool = "claude"
         config.tools = {
-            "claude": ToolConfig(config_paths=[".claude"]),
+            "claude": ToolConfig(mounts=[".claude/ide:ro"]),
         }
 
         with patch("yaas.container.Path.home", return_value=home):
@@ -863,28 +949,3 @@ class TestAiConfigMountsFromTools:
         )
         assert ide_mount is not None
         assert ide_mount.read_only is True
-
-    def test_no_claude_ide_without_claude_tool(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
-        """Claude IDE lock dir not mounted when claude tool is not configured."""
-        home = tmp_path / "home"
-        home.mkdir()
-        (home / ".claude").mkdir()
-        (home / ".claude" / "ide").mkdir()
-
-        config = Config()
-        config.ai_config = True
-        config.tools = {
-            "aider": ToolConfig(config_paths=[".aider"]),
-        }
-
-        with patch("yaas.container.Path.home", return_value=home):
-            spec = build_container_spec(config, tmp_path, ["bash"])
-
-        sandbox_home = spec.environment.get("HOME", "/home/user")
-        ide_mount = next(
-            (m for m in spec.mounts if m.target == f"{sandbox_home}/.claude/ide"),
-            None,
-        )
-        assert ide_mount is None
