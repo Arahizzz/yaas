@@ -68,6 +68,16 @@ pipx install git+https://github.com/arahizzz/yaas
 
 Requires Podman or Docker to be installed on your system.
 
+### Shell Completion
+
+YAAS supports tab completion for bash, zsh, and fish. Install it with:
+
+```bash
+yaas --install-completion
+```
+
+After restarting your shell, you can tab-complete commands (`yaas clau<TAB>` → `yaas claude`), options, and option values like `--network` and `--worktree`.
+
 ## Usage
 
 ### AI Tool Shortcuts
