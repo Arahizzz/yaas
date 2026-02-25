@@ -10,7 +10,6 @@
 # Features (what to mount/forward into the sandbox)
 # ssh_agent = false
 # git_config = false
-# ai_config = false       # Mount tool config paths defined in [tools] entries
 # container_socket = false # Docker/Podman socket passthrough
 # clipboard = false        # Enable clipboard access for image pasting
 
@@ -23,41 +22,52 @@
 # auto_pull_image = true   # Pull container image on every start
 # auto_upgrade_tools = true # Run mise upgrade on every start
 
-# Security
-# forward_api_keys = true  # Forward API keys (ANTHROPIC_API_KEY, etc.)
-
 # Resource limits
 # [resources]
 # memory = "8g"
 # cpus = 2.0
 # pids_limit = 1000
 
-# Custom mounts and environment variables
+# Global mounts (always applied)
 # mounts = ["~/data:/data:ro"]
-# env = { MY_VAR = "value" }
+
+# Global environment variables (always applied)
+# true = forward from host, "value" = hardcoded
+# [env]
+# GITHUB_TOKEN = true
+# GH_TOKEN = true
 
 # Tool shortcuts
 # Each tool becomes a CLI command: yaas <tool> [args...]
 # - command: executable to run (default: tool name). Supports multi-part commands.
 # - yolo_flags: flags appended in YOLO mode (use --no-yolo to disable)
-# - config_paths: directories mounted from $HOME when ai_config = true
+# - mounts: paths mounted from $HOME when running this tool
+#   - ".claude" → mounts ~/.claude to sandbox home
+#   - ".claude:ro" → same but read-only
+#   - "~/a:/data:ro" → explicit source:destination:mode
+# - env: environment variables for this tool
+#   - KEY = true → forward from host
+#   - KEY = "value" → hardcoded value
 
 [tools.claude]
 yolo_flags = ["--dangerously-skip-permissions"]
-config_paths = [".claude", ".claude.json"]
+mounts = [".claude", ".claude.json", ".claude/ide:ro"]
+env = { ANTHROPIC_API_KEY = true }
 
 # [tools.codex]
 # yolo_flags = ["--dangerously-bypass-approvals-and-sandbox"]
-# config_paths = [".codex"]
+# mounts = [".codex"]
+# env = { OPENAI_API_KEY = true }
 
 # [tools.gemini]
 # yolo_flags = ["--yolo"]
-# config_paths = [".gemini"]
+# mounts = [".gemini"]
+# env = { GEMINI_API_KEY = true, GOOGLE_API_KEY = true }
 
 # [tools.opencode]
 # yolo_flags = []
-# config_paths = [".config/opencode", ".local/share/opencode"]
+# mounts = [".config/opencode", ".local/share/opencode"]
 
 # [tools.aider]
 # yolo_flags = ["--yes"]
-# config_paths = [".aider"]
+# mounts = [".aider"]
