@@ -2,8 +2,9 @@
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from yaas.config import Config, ResourceLimits, load_config
+from yaas.config import Config, ResourceLimits, load_config, load_tool_commands
 
 
 def test_default_config() -> None:
@@ -17,6 +18,7 @@ def test_default_config() -> None:
     assert config.container_socket is False
     assert config.network_mode == "bridge"
     assert config.readonly_project is False
+    assert config.tools == {}
 
 
 def test_resource_limits_defaults() -> None:
@@ -48,3 +50,177 @@ cpus = 4.0
     assert config.network_mode == "none"
     assert config.resources.memory == "16g"
     assert config.resources.cpus == 4.0
+
+
+def test_tools_from_project_config() -> None:
+    """Test that tools are loaded from project config."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.claude]
+yolo_flags = ["--dangerously-skip-permissions"]
+config_paths = [".claude", ".claude.json"]
+
+[tools.aider]
+yolo_flags = ["--yes"]
+config_paths = [".aider"]
+""")
+        config = load_config(project_dir)
+
+    assert "claude" in config.tools
+    assert config.tools["claude"].yolo_flags == ["--dangerously-skip-permissions"]
+    assert config.tools["claude"].config_paths == [".claude", ".claude.json"]
+    assert "aider" in config.tools
+    assert config.tools["aider"].yolo_flags == ["--yes"]
+    assert config.tools["aider"].config_paths == [".aider"]
+
+
+def test_tools_field_level_merge() -> None:
+    """Test that project config merges tool fields, not replaces entire tool."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        # Simulate global config with full tool definition
+        global_config = Path(tmpdir) / "global.toml"
+        global_config.write_text("""
+[tools.claude]
+yolo_flags = ["--dangerously-skip-permissions"]
+config_paths = [".claude", ".claude.json"]
+""")
+        # Project config only overrides yolo_flags
+        project_config = project_dir / ".yaas.toml"
+        project_config.write_text("""
+[tools.claude]
+yolo_flags = []
+""")
+        config = Config()
+        from yaas.config import _merge_toml
+
+        _merge_toml(config, global_config)
+        _merge_toml(config, project_config)
+
+    assert config.tools["claude"].yolo_flags == []
+    assert config.tools["claude"].config_paths == [".claude", ".claude.json"]
+
+
+def test_tools_invalid_yolo_flags_skipped() -> None:
+    """Test that tools with invalid yolo_flags are skipped."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.bad]
+yolo_flags = "not-a-list"
+
+[tools.good]
+yolo_flags = ["--yes"]
+""")
+        config = load_config(project_dir)
+
+    assert "bad" not in config.tools
+    assert "good" in config.tools
+
+
+def test_tools_invalid_type_skipped() -> None:
+    """Test that non-table tool entries are skipped."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools]
+bad = "not-a-table"
+
+[tools.good]
+yolo_flags = ["--yes"]
+""")
+        config = load_config(project_dir)
+
+    assert "bad" not in config.tools
+    assert "good" in config.tools
+
+
+def test_load_tool_commands_fallback_on_error() -> None:
+    """Test that load_tool_commands returns empty dict on error."""
+    with patch("yaas.config.load_config", side_effect=Exception("boom")):
+        tools = load_tool_commands()
+
+    assert tools == {}
+
+
+def test_tool_with_empty_fields() -> None:
+    """Test that a tool with no fields is valid and uses defaults."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.mytool]
+""")
+        config = load_config(project_dir)
+
+    assert "mytool" in config.tools
+    assert config.tools["mytool"].command == []
+    assert config.tools["mytool"].yolo_flags == []
+    assert config.tools["mytool"].config_paths == []
+
+
+def test_tool_command_field() -> None:
+    """Test that command field is parsed from config."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.cc]
+command = ["npx", "claude-code"]
+yolo_flags = ["--dangerously-skip-permissions"]
+config_paths = [".claude"]
+""")
+        config = load_config(project_dir)
+
+    assert config.tools["cc"].command == ["npx", "claude-code"]
+    assert config.tools["cc"].yolo_flags == ["--dangerously-skip-permissions"]
+
+
+def test_tool_command_invalid_skipped() -> None:
+    """Test that tool with invalid command field is skipped."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.bad]
+command = "not-a-list"
+
+[tools.good]
+command = ["claude"]
+""")
+        config = load_config(project_dir)
+
+    assert "bad" not in config.tools
+    assert "good" in config.tools
+
+
+def test_tool_command_field_level_merge() -> None:
+    """Test that command field participates in field-level merge."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        global_config = Path(tmpdir) / "global.toml"
+        global_config.write_text("""
+[tools.cc]
+command = ["npx", "claude-code"]
+yolo_flags = ["--dangerously-skip-permissions"]
+config_paths = [".claude"]
+""")
+        project_config = project_dir / ".yaas.toml"
+        project_config.write_text("""
+[tools.cc]
+command = ["claude"]
+""")
+        config = Config()
+        from yaas.config import _merge_toml
+
+        _merge_toml(config, global_config)
+        _merge_toml(config, project_config)
+
+    assert config.tools["cc"].command == ["claude"]
+    # Other fields preserved from global
+    assert config.tools["cc"].yolo_flags == ["--dangerously-skip-permissions"]
+    assert config.tools["cc"].config_paths == [".claude"]

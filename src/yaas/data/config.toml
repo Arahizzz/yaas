@@ -1,0 +1,63 @@
+# YAAS configuration file
+# Global config: ~/.config/yaas/config.toml
+# Project overrides: .yaas.toml in project root
+#
+# See https://github.com/arahizzz/yaas for full documentation
+
+# Container runtime (auto-detected if omitted)
+# runtime = "podman"  # or "docker"
+
+# Features (what to mount/forward into the sandbox)
+# ssh_agent = false
+# git_config = false
+# ai_config = false       # Mount tool config paths defined in [tools] entries
+# container_socket = false # Docker/Podman socket passthrough
+# clipboard = false        # Enable clipboard access for image pasting
+
+# Isolation
+# network_mode = "bridge"  # "host", "bridge", or "none"
+# readonly_project = false
+# pid_mode = "host"        # or omit for isolated PID namespace
+
+# Auto-update
+# auto_pull_image = true   # Pull container image on every start
+# auto_upgrade_tools = true # Run mise upgrade on every start
+
+# Security
+# forward_api_keys = true  # Forward API keys (ANTHROPIC_API_KEY, etc.)
+
+# Resource limits
+# [resources]
+# memory = "8g"
+# cpus = 2.0
+# pids_limit = 1000
+
+# Custom mounts and environment variables
+# mounts = ["~/data:/data:ro"]
+# env = { MY_VAR = "value" }
+
+# Tool shortcuts
+# Each tool becomes a CLI command: yaas <tool> [args...]
+# - command: executable to run (default: tool name). Supports multi-part commands.
+# - yolo_flags: flags appended in YOLO mode (use --no-yolo to disable)
+# - config_paths: directories mounted from $HOME when ai_config = true
+
+[tools.claude]
+yolo_flags = ["--dangerously-skip-permissions"]
+config_paths = [".claude", ".claude.json"]
+
+# [tools.codex]
+# yolo_flags = ["--dangerously-bypass-approvals-and-sandbox"]
+# config_paths = [".codex"]
+
+# [tools.gemini]
+# yolo_flags = ["--yolo"]
+# config_paths = [".gemini"]
+
+# [tools.opencode]
+# yolo_flags = []
+# config_paths = [".config/opencode", ".local/share/opencode"]
+
+# [tools.aider]
+# yolo_flags = ["--yes"]
+# config_paths = [".aider"]

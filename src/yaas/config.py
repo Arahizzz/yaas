@@ -2,17 +2,31 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
 import sys
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:
-    import tomli as tomllib
+    import tomli as tomllib  # type: ignore[import-not-found]  # not installed on 3.11+
 
 from .constants import GLOBAL_CONFIG_PATH, PROJECT_CONFIG_NAME
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ToolConfig:
+    """Configuration for a tool shortcut (e.g., claude, aider)."""
+
+    command: list[str] = field(default_factory=list)  # empty = use tool name
+    yolo_flags: list[str] = field(default_factory=list)
+    config_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -35,7 +49,7 @@ class Config:
     # Features (what to mount/forward)
     ssh_agent: bool = False
     git_config: bool = False
-    ai_config: bool = False  # Mount all AI tool configs (.claude, .codex, .gemini, .opencode)
+    ai_config: bool = False  # Mount AI tool config paths from [tools] entries
     container_socket: bool = False  # Docker/Podman socket passthrough
     clipboard: bool = False  # Enable clipboard access for image pasting
 
@@ -58,9 +72,25 @@ class Config:
     # Security
     forward_api_keys: bool = True  # Forward API keys (ANTHROPIC_API_KEY, etc.)
 
+    # Tool shortcuts (yaas claude, yaas aider, etc.)
+    tools: dict[str, ToolConfig] = field(default_factory=dict)
+
+
+def _ensure_global_config() -> None:
+    """Auto-create default config.toml if missing (copy from vendored file)."""
+    if GLOBAL_CONFIG_PATH.exists():
+        return
+
+    GLOBAL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with resources.files("yaas.data").joinpath("config.toml").open("rb") as src:
+        with open(GLOBAL_CONFIG_PATH, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+    logger.info(f"Created default config at {GLOBAL_CONFIG_PATH}")
+
 
 def load_config(project_dir: Path) -> Config:
     """Load and merge global config → project config."""
+    _ensure_global_config()
     config = Config()
 
     # Global config
@@ -73,6 +103,19 @@ def load_config(project_dir: Path) -> Config:
         _merge_toml(config, project_config)
 
     return config
+
+
+def load_tool_commands() -> dict[str, ToolConfig]:
+    """Load tools for CLI command registration.
+
+    Reads global + project config from CWD. Called at import time by cli.py.
+    Never raises — falls back to empty dict on any error.
+    """
+    try:
+        return load_config(Path.cwd()).tools
+    except Exception:
+        logger.warning("Failed to load tool config, falling back to empty", exc_info=True)
+        return {}
 
 
 def _merge_toml(config: Config, path: Path) -> None:
@@ -91,5 +134,48 @@ def _merge_dict(config: Config, data: dict[str, Any]) -> None:
             for rkey, rvalue in value.items():
                 if hasattr(config.resources, rkey):
                     setattr(config.resources, rkey, rvalue)
+        elif key == "tools" and isinstance(value, dict):
+            _merge_tools(config.tools, value)
         elif hasattr(config, key):
             setattr(config, key, value)
+
+
+def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
+    """Merge tool entries with field-level merge per tool."""
+    for name, tool_data in data.items():
+        if not isinstance(tool_data, dict):
+            logger.warning(
+                "Skipping tool '%s': expected table, got %s", name, type(tool_data).__name__
+            )
+            continue
+
+        # Validate fields before modifying the dict
+        parsed: dict[str, list[str]] = {}
+        valid = True
+        for field_name in ("command", "yolo_flags", "config_paths"):
+            if field_name in tool_data:
+                val = tool_data[field_name]
+                if isinstance(val, list) and all(isinstance(v, str) for v in val):
+                    parsed[field_name] = val
+                else:
+                    logger.warning(
+                        "Skipping tool '%s': %s must be a list of strings",
+                        name, field_name,
+                    )
+                    valid = False
+                    break
+        if not valid:
+            continue
+
+        # Now safe to create/update the entry
+        existing = tools.get(name)
+        if existing is None:
+            existing = ToolConfig()
+            tools[name] = existing
+
+        if "command" in parsed:
+            existing.command = parsed["command"]
+        if "yolo_flags" in parsed:
+            existing.yolo_flags = parsed["yolo_flags"]
+        if "config_paths" in parsed:
+            existing.config_paths = parsed["config_paths"]
