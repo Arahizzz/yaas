@@ -9,7 +9,6 @@ from pathlib import Path
 
 from .config import Config
 from .constants import (
-    API_KEYS,
     CLONE_WORKSPACE,
     HOME_VOLUME,
     MISE_CONFIG_PATH,
@@ -343,7 +342,7 @@ def _add_optional_mounts(
     home: Path,
     sandbox_home: str,
 ) -> None:
-    """Add optional mounts based on config (git, AI, SSH, clipboard, mise).
+    """Add optional mounts based on config (git, SSH, clipboard, mise, tool mounts).
 
     Order matters: the home volume must be mounted first so that subsequent
     bind mounts for config files overlay on top of it.
@@ -352,26 +351,14 @@ def _add_optional_mounts(
     _add_mise_support(mounts)
 
     if config.git_config:
-        _add_config_mounts(mounts, home, sandbox_home, [".gitconfig", ".config/git"])
+        _add_git_config_mounts(mounts, home, sandbox_home)
 
-    if config.ai_config:
-        # Collect config_paths from all configured tools (deduplicated, preserving order)
-        all_config_paths: list[str] = []
-        seen: set[str] = set()
-        for tool in config.tools.values():
-            for path in tool.config_paths:
-                if path not in seen:
-                    all_config_paths.append(path)
-                    seen.add(path)
-        _add_config_mounts(mounts, home, sandbox_home, all_config_paths)
-
-        # Mount IDE lock directory as read-only to prevent container from deleting lock files
-        if "claude" in config.tools:
-            ide_dir = home / ".claude" / "ide"
-            if ide_dir.exists():
-                mounts.append(
-                    Mount(str(ide_dir), f"{sandbox_home}/.claude/ide", read_only=True)
-                )
+    # Tool-specific mounts (only when active_tool is set)
+    if config.active_tool:
+        tool = config.tools.get(config.active_tool)
+        if tool:
+            for mount_spec in tool.mounts:
+                mounts.append(_parse_tool_mount(mount_spec, home, sandbox_home))
 
     if config.ssh_agent:
         _add_ssh_agent(mounts)
@@ -475,18 +462,58 @@ def _add_mise_support(mounts: list[Mount]) -> None:
     mounts.append(Mount(str(MISE_CONFIG_PATH), f"{sandbox_home}/.config/mise/config.toml"))
 
 
-def _add_config_mounts(
+def _add_git_config_mounts(
     mounts: list[Mount],
     home: Path,
     sandbox_home: str,
-    configs: list[str],
 ) -> None:
-    """Add config file/directory mounts."""
-    for config_path in configs:
+    """Add git config file/directory mounts."""
+    for config_path in (".gitconfig", ".config/git"):
         src = home / config_path
         if src.exists():
             dst = f"{sandbox_home}/{config_path}"
             mounts.append(Mount(str(src), dst))
+
+
+def _parse_tool_mount(spec: str, home: Path, sandbox_home: str) -> Mount:
+    """Parse a tool mount spec.
+
+    Formats:
+    - ".claude" → src=~/.claude, dst=<sandbox_home>/.claude, rw
+    - ".claude:ro" → src=~/.claude, dst=<sandbox_home>/.claude, ro
+    - "~/a:/data" → src=~/a, dst=/data, rw
+    - "~/a:/data:ro" → src=~/a, dst=/data, ro
+    """
+    parts = spec.split(":")
+    read_only = False
+
+    if len(parts) == 1:
+        # ".claude" → home-relative, same relative dst
+        src = home / parts[0]
+        dst = f"{sandbox_home}/{parts[0]}"
+    elif len(parts) == 2 and parts[1] == "ro":
+        # ".claude:ro" → home-relative with read-only
+        src = home / parts[0]
+        dst = f"{sandbox_home}/{parts[0]}"
+        read_only = True
+    elif len(parts) == 2:
+        # "~/a:/data" → explicit src:dst
+        src = Path(parts[0]).expanduser()
+        dst = parts[1]
+    elif len(parts) == 3:
+        # "~/a:/data:ro" → explicit src:dst:ro
+        src = Path(parts[0]).expanduser()
+        dst = parts[1]
+        read_only = parts[2] == "ro"
+    else:
+        # Fallback: treat as home-relative
+        src = home / parts[0]
+        dst = f"{sandbox_home}/{parts[0]}"
+
+    if not src.exists():
+        logger.debug("Tool mount source does not exist, skipping: %s", src)
+
+    return Mount(str(src), dst, read_only=read_only)
 
 
 def _build_environment(
@@ -516,12 +543,6 @@ def _build_environment(
     if colorterm := os.environ.get("COLORTERM"):
         env["COLORTERM"] = colorterm
 
-    # Forward API keys
-    if config.forward_api_keys:
-        for key in API_KEYS:
-            if value := os.environ.get(key):
-                env[key] = value
-
     # SSH agent (use platform-aware socket detection)
     if config.ssh_agent and get_ssh_agent_socket():
         env["SSH_AUTH_SOCK"] = "/ssh-agent"
@@ -534,10 +555,31 @@ def _build_environment(
     if config.clipboard:
         _add_clipboard_environment(env)
 
-    # User-defined env
-    env.update(config.env)
+    # Global env (always applied)
+    _apply_env_dict(env, config.env)
+
+    # Tool-specific env (only when active_tool is set)
+    if config.active_tool:
+        tool = config.tools.get(config.active_tool)
+        if tool:
+            _apply_env_dict(env, tool.env)
 
     return env
+
+
+def _apply_env_dict(env: dict[str, str], env_dict: dict[str, str | bool]) -> None:
+    """Apply an env dict to the environment.
+
+    - true values: forward from host (pass-through via os.environ)
+    - string values: set directly
+    """
+    for key, value in env_dict.items():
+        if value is True:
+            host_val = os.environ.get(key)
+            if host_val is not None:
+                env[key] = host_val
+        elif isinstance(value, str):
+            env[key] = value
 
 
 def _add_clipboard_environment(env: dict[str, str]) -> None:
