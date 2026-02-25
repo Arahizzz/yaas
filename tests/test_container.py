@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yaas.config import Config
+from yaas.config import Config, ToolConfig
 from yaas.constants import CLONE_WORKSPACE, HOME_VOLUME, NIX_VOLUME, RUNTIME_IMAGE
 from yaas.container import (
     _add_worktree_mounts,
@@ -765,3 +765,126 @@ class TestWorktreeMountsIntegration:
         sources = [m.source for m in spec.mounts]
         assert str(project_dir) in sources
         assert str(wt_base) not in sources
+
+
+class TestAiConfigMountsFromTools:
+    """Tests for AI config mounts derived from tools config."""
+
+    def test_ai_config_mounts_from_tools(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """ai_config=True mounts config_paths from configured tools."""
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".claude").mkdir()
+        (home / ".aider").mkdir()
+
+        config = Config()
+        config.ai_config = True
+        config.tools = {
+            "claude": ToolConfig(config_paths=[".claude"]),
+            "aider": ToolConfig(config_paths=[".aider"]),
+        }
+
+        with patch("yaas.container.Path.home", return_value=home):
+            spec = build_container_spec(config, tmp_path, ["bash"])
+
+        targets = [m.target for m in spec.mounts]
+        sandbox_home = spec.environment.get("HOME", "/home/user")
+        assert f"{sandbox_home}/.claude" in targets
+        assert f"{sandbox_home}/.aider" in targets
+
+    def test_ai_config_deduplicates_paths(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Duplicate config_paths across tools are only mounted once."""
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".shared").mkdir()
+
+        config = Config()
+        config.ai_config = True
+        config.tools = {
+            "tool1": ToolConfig(config_paths=[".shared"]),
+            "tool2": ToolConfig(config_paths=[".shared"]),
+        }
+
+        with patch("yaas.container.Path.home", return_value=home):
+            spec = build_container_spec(config, tmp_path, ["bash"])
+
+        sandbox_home = spec.environment.get("HOME", "/home/user")
+        shared_mounts = [
+            m for m in spec.mounts if m.target == f"{sandbox_home}/.shared"
+        ]
+        assert len(shared_mounts) == 1
+
+    def test_ai_config_no_tools_no_mounts(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """ai_config=True with empty tools produces no AI config mounts."""
+        config = Config()
+        config.ai_config = True
+        config.tools = {}
+
+        spec = build_container_spec(config, tmp_path, ["bash"])
+
+        # No AI config mounts should exist (exclude mise config mount)
+        sandbox_home = spec.environment.get("HOME", "/home/user")
+        ai_mounts = [
+            m for m in spec.mounts
+            if m.target.startswith(f"{sandbox_home}/.")
+            and m.type == "bind"
+            and "mise" not in m.target
+        ]
+        assert ai_mounts == []
+
+    def test_claude_ide_readonly_mount(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Claude IDE lock dir is mounted read-only when claude tool is configured."""
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".claude").mkdir()
+        (home / ".claude" / "ide").mkdir()
+
+        config = Config()
+        config.ai_config = True
+        config.tools = {
+            "claude": ToolConfig(config_paths=[".claude"]),
+        }
+
+        with patch("yaas.container.Path.home", return_value=home):
+            spec = build_container_spec(config, tmp_path, ["bash"])
+
+        sandbox_home = spec.environment.get("HOME", "/home/user")
+        ide_mount = next(
+            (m for m in spec.mounts if m.target == f"{sandbox_home}/.claude/ide"),
+            None,
+        )
+        assert ide_mount is not None
+        assert ide_mount.read_only is True
+
+    def test_no_claude_ide_without_claude_tool(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Claude IDE lock dir not mounted when claude tool is not configured."""
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / ".claude").mkdir()
+        (home / ".claude" / "ide").mkdir()
+
+        config = Config()
+        config.ai_config = True
+        config.tools = {
+            "aider": ToolConfig(config_paths=[".aider"]),
+        }
+
+        with patch("yaas.container.Path.home", return_value=home):
+            spec = build_container_spec(config, tmp_path, ["bash"])
+
+        sandbox_home = spec.environment.get("HOME", "/home/user")
+        ide_mount = next(
+            (m for m in spec.mounts if m.target == f"{sandbox_home}/.claude/ide"),
+            None,
+        )
+        assert ide_mount is None

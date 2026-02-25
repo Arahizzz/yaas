@@ -355,23 +355,23 @@ def _add_optional_mounts(
         _add_config_mounts(mounts, home, sandbox_home, [".gitconfig", ".config/git"])
 
     if config.ai_config:
-        _add_config_mounts(
-            mounts,
-            home,
-            sandbox_home,
-            [
-                ".claude",
-                ".claude.json",
-                ".codex",
-                ".gemini",
-                ".config/opencode",
-                ".local/share/opencode",
-            ],
-        )
+        # Collect config_paths from all configured tools (deduplicated, preserving order)
+        all_config_paths: list[str] = []
+        seen: set[str] = set()
+        for tool in config.tools.values():
+            for path in tool.config_paths:
+                if path not in seen:
+                    all_config_paths.append(path)
+                    seen.add(path)
+        _add_config_mounts(mounts, home, sandbox_home, all_config_paths)
+
         # Mount IDE lock directory as read-only to prevent container from deleting lock files
-        ide_dir = home / ".claude" / "ide"
-        if ide_dir.exists():
-            mounts.append(Mount(str(ide_dir), f"{sandbox_home}/.claude/ide", read_only=True))
+        if "claude" in config.tools:
+            ide_dir = home / ".claude" / "ide"
+            if ide_dir.exists():
+                mounts.append(
+                    Mount(str(ide_dir), f"{sandbox_home}/.claude/ide", read_only=True)
+                )
 
     if config.ssh_agent:
         _add_ssh_agent(mounts)
