@@ -97,7 +97,6 @@ def run(
     ),
     ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
     git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
-    ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
     container_socket: bool = typer.Option(
         False, "--container-socket", help="Mount docker/podman socket"
     ),
@@ -124,8 +123,6 @@ def run(
         config.ssh_agent = True
     if git_config:
         config.git_config = True
-    if ai_config:
-        config.ai_config = True
     if container_socket:
         config.container_socket = True
     if clipboard:
@@ -153,7 +150,6 @@ def shell(
     ),
     ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
     git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
-    ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
     container_socket: bool = typer.Option(
         False, "--container-socket", help="Mount docker/podman socket"
     ),
@@ -176,8 +172,6 @@ def shell(
         config.ssh_agent = True
     if git_config:
         config.git_config = True
-    if ai_config:
-        config.ai_config = True
     if container_socket:
         config.container_socket = True
     if clipboard:
@@ -216,7 +210,6 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
         ),
         ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
         git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
-        ai_config: bool = typer.Option(False, "--ai-config", help="Mount AI tool configs"),
         container_socket: bool = typer.Option(
             False, "--container-socket", help="Mount docker/podman socket"
         ),
@@ -242,8 +235,6 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
             config.ssh_agent = True
         if git_config:
             config.git_config = True
-        if ai_config:
-            config.ai_config = True
         if container_socket:
             config.container_socket = True
         if clipboard:
@@ -254,6 +245,9 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
             config.resources.memory = memory
         if cpus:
             config.resources.cpus = cpus
+
+        # Set active tool for mount/env scoping
+        config.active_tool = tool
 
         # Build command with YOLO flags (unless --no-yolo)
         tc = config.tools.get(tool)
@@ -269,8 +263,8 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
     parts = [f"Run `{cmd_name}` in sandbox."]
     if tool_config.yolo_flags:
         parts.append(f"YOLO: {' '.join(tool_config.yolo_flags)}")
-    if tool_config.config_paths:
-        parts.append(f"Config: {', '.join(tool_config.config_paths)}")
+    if tool_config.mounts:
+        parts.append(f"Mounts: {', '.join(tool_config.mounts)}")
     tool_command.__doc__ = " ".join(parts)
 
 
@@ -298,7 +292,6 @@ def config_cmd() -> None:
     console.print(f"[bold]runtime:[/] {cfg.runtime or 'auto'}")
     console.print(f"[bold]ssh_agent:[/] {cfg.ssh_agent}")
     console.print(f"[bold]git_config:[/] {cfg.git_config}")
-    console.print(f"[bold]ai_config:[/] {cfg.ai_config}")
     console.print(f"[bold]container_socket:[/] {cfg.container_socket}")
     console.print(f"[bold]clipboard:[/] {cfg.clipboard}")
     console.print(f"[bold]network_mode:[/] {cfg.network_mode}")
@@ -306,8 +299,6 @@ def config_cmd() -> None:
     console.print("\n[bold]Auto-update:[/]")
     console.print(f"  auto_pull_image: {cfg.auto_pull_image}")
     console.print(f"  auto_upgrade_tools: {cfg.auto_upgrade_tools}")
-    console.print("\n[bold]Security:[/]")
-    console.print(f"  forward_api_keys: {cfg.forward_api_keys}")
     console.print("\n[bold]Resource limits:[/]")
     console.print(f"  memory: {cfg.resources.memory}")
     console.print(f"  cpus: {cfg.resources.cpus or 'unlimited'}")
@@ -320,12 +311,14 @@ def config_cmd() -> None:
                 console.print(f"    command: {tc.command}")
             if tc.yolo_flags:
                 console.print(f"    yolo_flags: {tc.yolo_flags}")
-            if tc.config_paths:
-                console.print(f"    config_paths: {tc.config_paths}")
+            if tc.mounts:
+                console.print(f"    mounts: {tc.mounts}")
+            if tc.env:
+                console.print(f"    env: {tc.env}")
     if cfg.mounts:
-        console.print(f"\n[bold]Custom mounts:[/] {cfg.mounts}")
+        console.print(f"\n[bold]Global mounts:[/] {cfg.mounts}")
     if cfg.env:
-        console.print(f"[bold]Custom env:[/] {cfg.env}")
+        console.print(f"[bold]Global env:[/] {cfg.env}")
 
 
 # Add alias for config command
