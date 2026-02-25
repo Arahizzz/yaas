@@ -31,16 +31,4 @@ MISE_CONFIG_PATH = CONFIG_DIR / "mise.toml"
 GLOBAL_CONFIG_PATH = CONFIG_DIR / "config.toml"
 PROJECT_CONFIG_NAME = ".yaas.toml"
 
-# API keys to auto-forward
-API_KEYS = [
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-    "COPILOT_GITHUB_TOKEN",
-    "OPENROUTER_API_KEY",
-]
-
 

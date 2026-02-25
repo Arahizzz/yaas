@@ -26,7 +26,8 @@ class ToolConfig:
 
     command: list[str] = field(default_factory=list)  # empty = use tool name
     yolo_flags: list[str] = field(default_factory=list)
-    config_paths: list[str] = field(default_factory=list)
+    mounts: list[str] = field(default_factory=list)
+    env: dict[str, str | bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -49,7 +50,6 @@ class Config:
     # Features (what to mount/forward)
     ssh_agent: bool = False
     git_config: bool = False
-    ai_config: bool = False  # Mount AI tool config paths from [tools] entries
     container_socket: bool = False  # Docker/Podman socket passthrough
     clipboard: bool = False  # Enable clipboard access for image pasting
 
@@ -63,17 +63,17 @@ class Config:
 
     # Custom
     mounts: list[str] = field(default_factory=list)
-    env: dict[str, str] = field(default_factory=dict)
+    env: dict[str, str | bool] = field(default_factory=dict)
 
     # Auto-update settings
     auto_pull_image: bool = True  # Pull image on every start
     auto_upgrade_tools: bool = True  # Run mise upgrade on every start
 
-    # Security
-    forward_api_keys: bool = True  # Forward API keys (ANTHROPIC_API_KEY, etc.)
-
     # Tool shortcuts (yaas claude, yaas aider, etc.)
     tools: dict[str, ToolConfig] = field(default_factory=dict)
+
+    # Active tool (set by CLI tool commands, None for run/shell)
+    active_tool: str | None = None
 
 
 def _ensure_global_config() -> None:
@@ -149,14 +149,14 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
             )
             continue
 
-        # Validate fields before modifying the dict
-        parsed: dict[str, list[str]] = {}
+        # Validate list fields before modifying the dict
+        parsed_lists: dict[str, list[str]] = {}
         valid = True
-        for field_name in ("command", "yolo_flags", "config_paths"):
+        for field_name in ("command", "yolo_flags", "mounts"):
             if field_name in tool_data:
                 val = tool_data[field_name]
                 if isinstance(val, list) and all(isinstance(v, str) for v in val):
-                    parsed[field_name] = val
+                    parsed_lists[field_name] = val
                 else:
                     logger.warning(
                         "Skipping tool '%s': %s must be a list of strings",
@@ -164,6 +164,23 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
                     )
                     valid = False
                     break
+
+        # Validate env dict
+        parsed_env: dict[str, str | bool] | None = None
+        if valid and "env" in tool_data:
+            env_val = tool_data["env"]
+            if isinstance(env_val, dict) and all(
+                isinstance(k, str) and isinstance(v, (str, bool))
+                for k, v in env_val.items()
+            ):
+                parsed_env = env_val
+            else:
+                logger.warning(
+                    "Skipping tool '%s': env must be a dict of str -> str | bool",
+                    name,
+                )
+                valid = False
+
         if not valid:
             continue
 
@@ -173,9 +190,11 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
             existing = ToolConfig()
             tools[name] = existing
 
-        if "command" in parsed:
-            existing.command = parsed["command"]
-        if "yolo_flags" in parsed:
-            existing.yolo_flags = parsed["yolo_flags"]
-        if "config_paths" in parsed:
-            existing.config_paths = parsed["config_paths"]
+        if "command" in parsed_lists:
+            existing.command = parsed_lists["command"]
+        if "yolo_flags" in parsed_lists:
+            existing.yolo_flags = parsed_lists["yolo_flags"]
+        if "mounts" in parsed_lists:
+            existing.mounts = parsed_lists["mounts"]
+        if parsed_env is not None:
+            existing.env = parsed_env
