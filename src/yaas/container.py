@@ -332,7 +332,8 @@ def _build_mounts(
 
     # User-defined mounts
     for mount_spec in config.mounts:
-        mounts.append(_parse_mount_spec(mount_spec, project_dir))
+        if mount := _parse_mount_spec(mount_spec, project_dir):
+            mounts.append(mount)
 
     return mounts, groups
 
@@ -361,7 +362,8 @@ def _add_optional_mounts(
         tool = config.tools.get(config.active_tool)
         if tool:
             for mount_spec in tool.mounts:
-                mounts.append(_parse_mount_spec(mount_spec, project_dir, sandbox_home))
+                if mount := _parse_mount_spec(mount_spec, project_dir, sandbox_home):
+                    mounts.append(mount)
 
     if config.ssh_agent:
         _add_ssh_agent(mounts)
@@ -559,7 +561,7 @@ def _add_clipboard_environment(env: dict[str, str]) -> None:
         env["DISPLAY"] = x_display
 
 
-def _parse_mount_spec(spec: str, project_dir: Path, sandbox_home: str = "/home") -> Mount:
+def _parse_mount_spec(spec: str, project_dir: Path, sandbox_home: str = "/home") -> Mount | None:
     """Parse mount spec with unified format.
 
     Formats:
@@ -604,6 +606,10 @@ def _parse_mount_spec(spec: str, project_dir: Path, sandbox_home: str = "/home")
     src_path = Path(src).expanduser()
     if not src_path.is_absolute():
         src_path = project_dir / src_path
+
+    if not src_path.exists():
+        logger.warning("Mount source does not exist, skipping: %s", src_path)
+        return None
 
     # Auto-compute destination for ~ paths
     if dst is None:
