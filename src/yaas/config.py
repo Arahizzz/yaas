@@ -6,6 +6,7 @@ import logging
 import shutil
 import sys
 from dataclasses import dataclass, field
+from dataclasses import fields as dc_fields
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -21,16 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ToolConfig:
-    """Configuration for a tool shortcut (e.g., claude, aider)."""
-
-    command: list[str] = field(default_factory=list)  # empty = use tool name
-    yolo_flags: list[str] = field(default_factory=list)
-    mounts: list[str] = field(default_factory=list)
-    env: dict[str, str | bool] = field(default_factory=dict)
-
-
-@dataclass
 class ResourceLimits:
     """Container resource limits."""
 
@@ -41,29 +32,56 @@ class ResourceLimits:
 
 
 @dataclass
-class Config:
-    """Runtime configuration, merged from global + project files + CLI flags."""
+class ContainerSettings:
+    """Container runtime settings shared by Config and ToolConfig.
+
+    For ToolConfig: None means "inherit from global config".
+    For Config: defaults are concrete values (False, "bridge", etc.).
+    """
+
+    ssh_agent: bool | None = None
+    git_config: bool | None = None
+    container_socket: bool | None = None
+    clipboard: bool | None = None
+    network_mode: str | None = None
+    readonly_project: bool | None = None
+    pid_mode: str | None = None
+    resources: ResourceLimits | None = None
+    mounts: list[str] = field(default_factory=list)
+    env: dict[str, str | bool] = field(default_factory=dict)
+
+
+@dataclass
+class ToolConfig(ContainerSettings):
+    """Configuration for a tool shortcut (e.g., claude, aider).
+
+    Inherits container setting fields from ContainerSettings.
+    None values mean "inherit from the global/project config".
+    """
+
+    command: list[str] = field(default_factory=list)  # empty = use tool name
+    yolo_flags: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Config(ContainerSettings):
+    """Runtime configuration, merged from global + project files + CLI flags.
+
+    Inherits container setting fields from ContainerSettings with concrete defaults.
+    """
+
+    # Override ContainerSettings defaults to concrete values.
+    # Type narrowing (bool | None → bool) is valid: Config always has concrete values.
+    ssh_agent: bool = False
+    git_config: bool = False
+    container_socket: bool = False
+    clipboard: bool = False
+    network_mode: str = "bridge"
+    readonly_project: bool = False
+    resources: ResourceLimits = field(default_factory=ResourceLimits)
 
     # Container
     runtime: str | None = None  # None = auto-detect
-
-    # Features (what to mount/forward)
-    ssh_agent: bool = False
-    git_config: bool = False
-    container_socket: bool = False  # Docker/Podman socket passthrough
-    clipboard: bool = False  # Enable clipboard access for image pasting
-
-    # Isolation
-    network_mode: str = "bridge"  # "host", "bridge", or "none"
-    readonly_project: bool = False
-    pid_mode: str | None = None
-
-    # Resource limits
-    resources: ResourceLimits = field(default_factory=ResourceLimits)
-
-    # Custom
-    mounts: list[str] = field(default_factory=list)
-    env: dict[str, str | bool] = field(default_factory=dict)
 
     # Auto-update settings
     auto_pull_image: bool = True  # Pull image on every start
@@ -74,6 +92,11 @@ class Config:
 
     # Active tool (set by CLI tool commands, None for run/shell)
     active_tool: str | None = None
+
+
+# Precompute ContainerSettings field names for generic merge/resolve
+_CONTAINER_FIELDS = frozenset(f.name for f in dc_fields(ContainerSettings))
+_SPECIAL_FIELDS = frozenset({"mounts", "env", "resources"})
 
 
 def _ensure_global_config() -> None:
@@ -129,7 +152,7 @@ def _merge_toml(config: Config, path: Path) -> None:
 def _merge_dict(config: Config, data: dict[str, Any]) -> None:
     """Merge dictionary values into config."""
     for key, value in data.items():
-        if key == "resources" and isinstance(value, dict):
+        if key == "resources" and isinstance(value, dict) and config.resources is not None:
             # Handle nested resources
             for rkey, rvalue in value.items():
                 if hasattr(config.resources, rkey):
@@ -198,3 +221,15 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
             existing.mounts = parsed_lists["mounts"]
         if parsed_env is not None:
             existing.env = parsed_env
+
+        # Container setting overrides — generic via ContainerSettings fields
+        for field_name in _CONTAINER_FIELDS - _SPECIAL_FIELDS:
+            if field_name in tool_data and isinstance(tool_data[field_name], (bool, str)):
+                setattr(existing, field_name, tool_data[field_name])
+
+        if "resources" in tool_data and isinstance(tool_data["resources"], dict):
+            if existing.resources is None:
+                existing.resources = ResourceLimits()
+            for rkey, rvalue in tool_data["resources"].items():
+                if hasattr(existing.resources, rkey):
+                    setattr(existing.resources, rkey, rvalue)
