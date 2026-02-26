@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yaas.config import Config, ToolConfig
+from yaas.config import Config, ResourceLimits, ToolConfig
 from yaas.constants import CLONE_WORKSPACE, HOME_VOLUME, NIX_VOLUME, RUNTIME_IMAGE
 from yaas.container import (
     _add_worktree_mounts,
@@ -949,3 +949,58 @@ class TestActiveToolScoping:
         )
         assert ide_mount is not None
         assert ide_mount.read_only is True
+
+    def test_tool_overrides_network_mode(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Tool network_mode override is reflected in ContainerSpec."""
+        config = Config(
+            network_mode="bridge",
+            active_tool="claude",
+            tools={"claude": ToolConfig(network_mode="none")},
+        )
+        spec = build_container_spec(config, tmp_path, ["bash"])
+        assert spec.network_mode == "none"
+
+    def test_tool_overrides_readonly_project(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Tool readonly_project override makes project mount read-only."""
+        config = Config(
+            readonly_project=False,
+            active_tool="claude",
+            tools={"claude": ToolConfig(readonly_project=True)},
+        )
+        spec = build_container_spec(config, tmp_path, ["bash"])
+
+        project_mount = next(
+            (m for m in spec.mounts if m.target == str(tmp_path)),
+            None,
+        )
+        assert project_mount is not None
+        assert project_mount.read_only is True
+
+    def test_tool_overrides_resources(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Tool resource overrides are reflected in ContainerSpec."""
+        config = Config(
+            resources=ResourceLimits(memory="8g", cpus=2.0),
+            active_tool="claude",
+            tools={"claude": ToolConfig(resources=ResourceLimits(memory="16g"))},
+        )
+        spec = build_container_spec(config, tmp_path, ["bash"])
+        assert spec.memory == "16g"
+        assert spec.cpus == 2.0  # inherited from global
+
+    def test_tool_overrides_pid_mode(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Tool pid_mode override is reflected in ContainerSpec."""
+        config = Config(
+            pid_mode=None,
+            active_tool="claude",
+            tools={"claude": ToolConfig(pid_mode="host")},
+        )
+        spec = build_container_spec(config, tmp_path, ["bash"])
+        assert spec.pid_mode == "host"

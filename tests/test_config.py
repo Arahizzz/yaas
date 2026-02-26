@@ -4,7 +4,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from yaas.config import Config, ResourceLimits, load_config, load_tool_commands
+from yaas.config import (
+    Config,
+    ContainerSettings,
+    ResourceLimits,
+    ToolConfig,
+    load_config,
+    load_tool_commands,
+    resolve_effective_config,
+)
 
 
 def test_default_config() -> None:
@@ -31,6 +39,37 @@ def test_resource_limits_defaults() -> None:
     assert limits.memory_swap is None
     assert limits.cpus is None
     assert limits.pids_limit is None
+
+
+def test_container_settings_defaults() -> None:
+    """Test that ContainerSettings defaults are all None/empty (inherit semantics)."""
+    settings = ContainerSettings()
+    assert settings.ssh_agent is None
+    assert settings.git_config is None
+    assert settings.container_socket is None
+    assert settings.clipboard is None
+    assert settings.network_mode is None
+    assert settings.readonly_project is None
+    assert settings.pid_mode is None
+    assert settings.resources is None
+    assert settings.mounts == []
+    assert settings.env == {}
+
+
+def test_inheritance_hierarchy() -> None:
+    """Test that Config and ToolConfig inherit from ContainerSettings."""
+    assert issubclass(Config, ContainerSettings)
+    assert issubclass(ToolConfig, ContainerSettings)
+
+    # ToolConfig inherits None defaults
+    tc = ToolConfig()
+    assert tc.ssh_agent is None
+    assert tc.network_mode is None
+
+    # Config overrides with concrete defaults
+    cfg = Config()
+    assert cfg.ssh_agent is False
+    assert cfg.network_mode == "bridge"
 
 
 def test_project_config_overrides() -> None:
@@ -311,3 +350,275 @@ CUSTOM_KEY = "override"
     assert config.tools["claude"].env == {"CUSTOM_KEY": "override"}
     # mounts preserved from global
     assert config.tools["claude"].mounts == [".claude"]
+
+
+# --- resolve_effective_config tests ---
+
+
+def test_resolve_no_active_tool() -> None:
+    """Test that resolve_effective_config returns config unchanged when no active tool."""
+    config = Config(ssh_agent=False, network_mode="bridge")
+    result = resolve_effective_config(config)
+    assert result is config  # same object, not a copy
+
+
+def test_resolve_unknown_active_tool() -> None:
+    """Test that resolve_effective_config returns config unchanged for unknown tool."""
+    config = Config(active_tool="nonexistent")
+    result = resolve_effective_config(config)
+    assert result is config
+
+
+def test_resolve_bool_overrides() -> None:
+    """Test that tool bool overrides replace global values."""
+    config = Config(
+        ssh_agent=False,
+        git_config=False,
+        clipboard=False,
+        active_tool="claude",
+        tools={"claude": ToolConfig(ssh_agent=True, git_config=True)},
+    )
+    result = resolve_effective_config(config)
+
+    assert result.ssh_agent is True
+    assert result.git_config is True
+    # Not overridden — inherits global
+    assert result.clipboard is False
+
+
+def test_resolve_network_mode_override() -> None:
+    """Test that tool network_mode overrides global value."""
+    config = Config(
+        network_mode="bridge",
+        active_tool="claude",
+        tools={"claude": ToolConfig(network_mode="none")},
+    )
+    result = resolve_effective_config(config)
+    assert result.network_mode == "none"
+
+
+def test_resolve_readonly_project_override() -> None:
+    """Test that tool readonly_project overrides global value."""
+    config = Config(
+        readonly_project=False,
+        active_tool="claude",
+        tools={"claude": ToolConfig(readonly_project=True)},
+    )
+    result = resolve_effective_config(config)
+    assert result.readonly_project is True
+
+
+def test_resolve_pid_mode_override() -> None:
+    """Test that tool pid_mode overrides global value."""
+    config = Config(
+        pid_mode=None,
+        active_tool="claude",
+        tools={"claude": ToolConfig(pid_mode="host")},
+    )
+    result = resolve_effective_config(config)
+    assert result.pid_mode == "host"
+
+
+def test_resolve_resources_partial_override() -> None:
+    """Test that tool resources override only specified fields."""
+    config = Config(
+        resources=ResourceLimits(memory="8g", cpus=2.0, pids_limit=1000),
+        active_tool="claude",
+        tools={"claude": ToolConfig(resources=ResourceLimits(memory="16g"))},
+    )
+    result = resolve_effective_config(config)
+
+    assert result.resources.memory == "16g"  # overridden
+    assert result.resources.cpus == 2.0  # inherited
+    assert result.resources.pids_limit == 1000  # inherited
+
+
+def test_resolve_env_overlay() -> None:
+    """Test that tool env overlays global env (tool wins on conflict)."""
+    config = Config(
+        env={"GITHUB_TOKEN": True, "SHARED": "global"},
+        active_tool="claude",
+        tools={"claude": ToolConfig(env={"ANTHROPIC_API_KEY": True, "SHARED": "tool"})},
+    )
+    result = resolve_effective_config(config)
+
+    assert result.env == {
+        "GITHUB_TOKEN": True,
+        "ANTHROPIC_API_KEY": True,
+        "SHARED": "tool",
+    }
+
+
+def test_resolve_env_empty_tool_env() -> None:
+    """Test that empty tool env preserves global env."""
+    config = Config(
+        env={"GITHUB_TOKEN": True},
+        active_tool="claude",
+        tools={"claude": ToolConfig()},
+    )
+    result = resolve_effective_config(config)
+    assert result.env == {"GITHUB_TOKEN": True}
+
+
+def test_resolve_none_fields_skipped() -> None:
+    """Test that None override fields are skipped (inherit global)."""
+    config = Config(
+        ssh_agent=True,
+        network_mode="host",
+        active_tool="claude",
+        tools={"claude": ToolConfig()},  # all overrides are None
+    )
+    result = resolve_effective_config(config)
+
+    assert result.ssh_agent is True
+    assert result.network_mode == "host"
+
+
+def test_resolve_does_not_mutate_original() -> None:
+    """Test that resolve_effective_config returns a new Config without mutating the original."""
+    config = Config(
+        ssh_agent=False,
+        env={"GLOBAL": "yes"},
+        resources=ResourceLimits(memory="8g"),
+        active_tool="claude",
+        tools={"claude": ToolConfig(
+            ssh_agent=True,
+            env={"TOOL": "yes"},
+            resources=ResourceLimits(memory="16g"),
+        )},
+    )
+    result = resolve_effective_config(config)
+
+    # Original unchanged
+    assert config.ssh_agent is False
+    assert config.env == {"GLOBAL": "yes"}
+    assert config.resources.memory == "8g"
+
+    # Resolved has overrides
+    assert result.ssh_agent is True
+    assert result.env == {"GLOBAL": "yes", "TOOL": "yes"}
+    assert result.resources.memory == "16g"
+
+
+# --- Tool override TOML parsing tests ---
+
+
+def test_tool_override_bool_fields_from_toml() -> None:
+    """Test that tool bool override fields are parsed from TOML."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.claude]
+yolo_flags = ["--dangerously-skip-permissions"]
+ssh_agent = true
+git_config = true
+container_socket = false
+clipboard = true
+readonly_project = true
+""")
+        config = load_config(project_dir)
+
+    tc = config.tools["claude"]
+    assert tc.ssh_agent is True
+    assert tc.git_config is True
+    assert tc.container_socket is False
+    assert tc.clipboard is True
+    assert tc.readonly_project is True
+
+
+def test_tool_override_string_fields_from_toml() -> None:
+    """Test that tool string override fields are parsed from TOML."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.claude]
+network_mode = "none"
+pid_mode = "host"
+""")
+        config = load_config(project_dir)
+
+    tc = config.tools["claude"]
+    assert tc.network_mode == "none"
+    assert tc.pid_mode == "host"
+
+
+def test_tool_override_resources_from_toml() -> None:
+    """Test that tool resource overrides are parsed from TOML."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.claude]
+mounts = [".claude"]
+
+[tools.claude.resources]
+memory = "16g"
+cpus = 4.0
+""")
+        config = load_config(project_dir)
+
+    tc = config.tools["claude"]
+    assert tc.resources is not None
+    assert tc.resources.memory == "16g"
+    assert tc.resources.cpus == 4.0
+    assert tc.resources.pids_limit is None  # not overridden
+
+
+def test_tool_override_field_level_merge() -> None:
+    """Test that tool override fields participate in field-level merge."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        global_config = Path(tmpdir) / "global.toml"
+        global_config.write_text("""
+[tools.claude]
+yolo_flags = ["--dangerously-skip-permissions"]
+mounts = [".claude"]
+ssh_agent = true
+network_mode = "none"
+""")
+        project_config = project_dir / ".yaas.toml"
+        project_config.write_text("""
+[tools.claude]
+network_mode = "bridge"
+""")
+        config = Config()
+        from yaas.config import _merge_toml
+
+        _merge_toml(config, global_config)
+        _merge_toml(config, project_config)
+
+    tc = config.tools["claude"]
+    # Overridden by project
+    assert tc.network_mode == "bridge"
+    # Preserved from global
+    assert tc.ssh_agent is True
+    assert tc.mounts == [".claude"]
+    assert tc.yolo_flags == ["--dangerously-skip-permissions"]
+
+
+def test_tool_override_backward_compatible() -> None:
+    """Test that old-format TOML (only command/yolo_flags/mounts/env) still works."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.claude]
+command = ["npx", "claude-code"]
+yolo_flags = ["--dangerously-skip-permissions"]
+mounts = [".claude", ".claude.json"]
+env = { ANTHROPIC_API_KEY = true }
+""")
+        config = load_config(project_dir)
+
+    tc = config.tools["claude"]
+    assert tc.command == ["npx", "claude-code"]
+    assert tc.yolo_flags == ["--dangerously-skip-permissions"]
+    assert tc.mounts == [".claude", ".claude.json"]
+    assert tc.env == {"ANTHROPIC_API_KEY": True}
+    # All overrides should be None (not set)
+    assert tc.ssh_agent is None
+    assert tc.git_config is None
+    assert tc.network_mode is None
+    assert tc.resources is None
