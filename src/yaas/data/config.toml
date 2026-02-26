@@ -48,6 +48,18 @@
 # - env: environment variables for this tool
 #   - KEY = true → forward from host
 #   - KEY = "value" → hardcoded value
+#
+# Tools can also override any container setting:
+#   ssh_agent = true
+#   git_config = true
+#   container_socket = false
+#   clipboard = false
+#   network_mode = "none"
+#   readonly_project = true
+#   pid_mode = "host"
+#   [tools.<name>.resources]
+#   memory = "16g"
+#   cpus = 4.0
 
 [tools.claude]
 yolo_flags = ["--dangerously-skip-permissions"]
