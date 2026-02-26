@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from dataclasses import fields as dc_fields
 from importlib import resources
 from pathlib import Path
@@ -139,6 +139,47 @@ def load_tool_commands() -> dict[str, ToolConfig]:
     except Exception:
         logger.warning("Failed to load tool config, falling back to empty", exc_info=True)
         return {}
+
+
+def resolve_effective_config(config: Config) -> Config:
+    """Apply active tool overrides to produce effective config.
+
+    Returns a new Config with tool overrides applied on top of global/project
+    settings. Mounts are NOT merged here (they use different parsing logic
+    and are handled in container.py).
+
+    Priority: global → project → tool overrides (this function) → CLI flags (caller).
+    """
+    if not config.active_tool:
+        return config
+
+    tool = config.tools.get(config.active_tool)
+    if not tool:
+        return config
+
+    resolved = replace(config)
+
+    # Scalar overrides — generic via ContainerSettings field introspection
+    for field_name in _CONTAINER_FIELDS - _SPECIAL_FIELDS:
+        value = getattr(tool, field_name)
+        if value is not None:
+            setattr(resolved, field_name, value)
+
+    # Resource overrides (field-level merge)
+    if tool.resources is not None:
+        resolved.resources = (
+            replace(config.resources) if config.resources else ResourceLimits()
+        )
+        for rf in dc_fields(ResourceLimits):
+            rv = getattr(tool.resources, rf.name)
+            if rv is not None:
+                setattr(resolved.resources, rf.name, rv)
+
+    # Env overlay (tool env on top of global env)
+    if tool.env:
+        resolved.env = {**config.env, **tool.env}
+
+    return resolved
 
 
 def _merge_toml(config: Config, path: Path) -> None:

@@ -10,7 +10,15 @@ import typer
 from rich.console import Console
 
 from .completions import NetworkMode, complete_worktree
-from .config import Config, ToolConfig, load_config, load_tool_commands
+from .config import (
+    _CONTAINER_FIELDS,
+    _SPECIAL_FIELDS,
+    Config,
+    ToolConfig,
+    load_config,
+    load_tool_commands,
+    resolve_effective_config,
+)
 from .constants import (
     CLONE_VOLUME_PREFIX,
     HOME_VOLUME,
@@ -231,6 +239,11 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
         project_dir, worktree_name = _resolve_worktree(worktree)
         config = load_config(project_dir)
 
+        # Set active tool and resolve overrides before CLI flags
+        config.active_tool = tool
+        config = resolve_effective_config(config)
+
+        # CLI flags override tool config (highest priority)
         if ssh_agent:
             config.ssh_agent = True
         if git_config:
@@ -245,9 +258,6 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
             config.resources.memory = memory
         if cpus:
             config.resources.cpus = cpus
-
-        # Set active tool for mount/env scoping
-        config.active_tool = tool
 
         # Build command with YOLO flags (unless --no-yolo)
         tc = config.tools.get(tool)
@@ -265,6 +275,14 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
         parts.append(f"YOLO: {' '.join(tool_config.yolo_flags)}")
     if tool_config.mounts:
         parts.append(f"Mounts: {', '.join(tool_config.mounts)}")
+    # Show container setting overrides in help (generic via ContainerSettings fields)
+    overrides = []
+    for field_name in sorted(_CONTAINER_FIELDS - _SPECIAL_FIELDS):
+        value = getattr(tool_config, field_name)
+        if value is not None:
+            overrides.append(f"{field_name}={value}")
+    if overrides:
+        parts.append(f"Overrides: {', '.join(overrides)}")
     tool_command.__doc__ = " ".join(parts)
 
 
@@ -315,6 +333,13 @@ def config_cmd() -> None:
                 console.print(f"    mounts: {tc.mounts}")
             if tc.env:
                 console.print(f"    env: {tc.env}")
+            # Container setting overrides (generic via ContainerSettings fields)
+            for field_name in sorted(_CONTAINER_FIELDS - _SPECIAL_FIELDS):
+                value = getattr(tc, field_name)
+                if value is not None:
+                    console.print(f"    {field_name}: {value}")
+            if tc.resources is not None:
+                console.print(f"    resources: {tc.resources}")
     if cfg.mounts:
         console.print(f"\n[bold]Global mounts:[/] {cfg.mounts}")
     if cfg.env:

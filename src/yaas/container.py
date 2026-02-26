@@ -7,7 +7,7 @@ import shutil
 from importlib import resources
 from pathlib import Path
 
-from .config import Config
+from .config import Config, resolve_effective_config
 from .constants import (
     CLONE_WORKSPACE,
     HOME_VOLUME,
@@ -162,6 +162,7 @@ def build_container_spec(
         tty: Allocate a pseudo-TTY (requires stdin to be a TTY)
         stdin_open: Keep stdin open (needed for piped input)
     """
+    config = resolve_effective_config(config)
     uid, gid = get_uid_gid()
     home = Path.home()
     sandbox_home = "/home"
@@ -209,6 +210,7 @@ def build_clone_work_spec(
     This is used for the work container in clone mode, after the repo has been
     cloned into the ephemeral volume.
     """
+    config = resolve_effective_config(config)
     uid, gid = get_uid_gid()
     home = Path.home()
     sandbox_home = "/home"
@@ -555,14 +557,8 @@ def _build_environment(
     if config.clipboard:
         _add_clipboard_environment(env)
 
-    # Global env (always applied)
+    # User-defined env (global + tool env, pre-merged by resolve_effective_config)
     _apply_env_dict(env, config.env)
-
-    # Tool-specific env (only when active_tool is set)
-    if config.active_tool:
-        tool = config.tools.get(config.active_tool)
-        if tool:
-            _apply_env_dict(env, tool.env)
 
     return env
 
