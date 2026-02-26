@@ -12,7 +12,6 @@ from yaas.constants import CLONE_WORKSPACE, HOME_VOLUME, NIX_VOLUME, RUNTIME_IMA
 from yaas.container import (
     _add_worktree_mounts,
     _parse_mount_spec,
-    _parse_tool_mount,
     build_clone_spec,
     build_clone_work_spec,
     build_container_spec,
@@ -117,84 +116,159 @@ class TestBuildContainerSpec:
 class TestParseMountSpec:
     """Tests for _parse_mount_spec function."""
 
-    def test_simple(self) -> None:
+    def test_simple(self, tmp_path: Path) -> None:
         """Test parsing simple mount spec."""
-        mount = _parse_mount_spec("/host/path:/container/path", Path("/project"))
+        src = tmp_path / "host"
+        src.mkdir()
+        mount = _parse_mount_spec(f"{src}:/container/path", Path("/project"))
 
-        assert mount.source == "/host/path"
+        assert mount is not None
+        assert mount.source == str(src)
         assert mount.target == "/container/path"
         assert mount.read_only is False
 
-    def test_readonly(self) -> None:
+    def test_readonly(self, tmp_path: Path) -> None:
         """Test parsing mount spec with readonly flag."""
-        mount = _parse_mount_spec("/host:/container:ro", Path("/project"))
+        src = tmp_path / "host"
+        src.mkdir()
+        mount = _parse_mount_spec(f"{src}:/container:ro", Path("/project"))
 
-        assert mount.source == "/host"
+        assert mount is not None
+        assert mount.source == str(src)
         assert mount.target == "/container"
         assert mount.read_only is True
 
-    def test_relative_path(self) -> None:
+    def test_relative_path(self, tmp_path: Path) -> None:
         """Test parsing mount spec with relative path."""
-        mount = _parse_mount_spec("./data:/data", Path("/project"))
+        (tmp_path / "data").mkdir()
+        mount = _parse_mount_spec("./data:/data", tmp_path)
 
-        assert mount.source == "/project/data"
+        assert mount is not None
+        assert mount.source == str(tmp_path / "data")
         assert mount.target == "/data"
 
     def test_home_expansion(self) -> None:
         """Test parsing mount spec with home directory expansion."""
-        mount = _parse_mount_spec("~/data:/data", Path("/project"))
+        # ~ itself always exists
+        mount = _parse_mount_spec("~:/data", Path("/project"))
 
-        assert mount.source.startswith(str(Path.home()))
+        assert mount is not None
+        assert mount.source == str(Path.home())
         assert mount.target == "/data"
 
 
-class TestParseToolMount:
-    """Tests for _parse_tool_mount function."""
+class TestParseMountSpecMissing:
+    """Tests for _parse_mount_spec with missing source paths."""
 
-    def test_home_relative(self, tmp_path: Path) -> None:
-        """Test parsing home-relative mount spec like '.claude'."""
-        home = tmp_path / "home"
-        mount = _parse_tool_mount(".claude", home, "/home")
+    def test_missing_source_returns_none(self, tmp_path: Path) -> None:
+        """Non-existent source path returns None."""
+        result = _parse_mount_spec(f"{tmp_path}/nonexistent:/data", Path("/project"))
+        assert result is None
 
-        assert mount.source == str(home / ".claude")
-        assert mount.target == "/home/.claude"
+    def test_missing_home_source_returns_none(self) -> None:
+        """Non-existent ~ path returns None."""
+        result = _parse_mount_spec("~/.yaas_nonexistent_test_path", Path("/project"))
+        assert result is None
+
+    def test_missing_tool_mount_skipped_in_spec(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """Tool mount with missing source is not included in container spec."""
+        config = Config()
+        config.active_tool = "claude"
+        config.tools = {
+            "claude": ToolConfig(mounts=["~/.yaas_nonexistent_test_path"]),
+        }
+
+        spec = build_container_spec(config, tmp_path, ["bash"])
+
+        targets = [m.target for m in spec.mounts]
+        assert "/home/.yaas_nonexistent_test_path" not in targets
+
+
+class TestParseMountSpecAutoDst:
+    """Tests for _parse_mount_spec auto-destination with ~ paths."""
+
+    def test_home_tilde_auto_dst(self, tmp_path: Path) -> None:
+        """~/.x with no dst → auto-computes /home/.x."""
+        src = tmp_path / ".x"
+        src.mkdir()
+        with patch("yaas.container.Path.expanduser", return_value=src):
+            mount = _parse_mount_spec("~/.x", Path("/project"))
+
+        assert mount is not None
+        assert mount.source == str(src)
+        assert mount.target == "/home/.x"
         assert mount.read_only is False
 
-    def test_home_relative_readonly(self, tmp_path: Path) -> None:
-        """Test parsing home-relative mount with :ro like '.claude:ro'."""
-        home = tmp_path / "home"
-        mount = _parse_tool_mount(".claude:ro", home, "/home")
+    def test_home_tilde_auto_dst_readonly(self, tmp_path: Path) -> None:
+        """~/.x:ro → auto-dst + read-only."""
+        src = tmp_path / ".x"
+        src.mkdir()
+        with patch("yaas.container.Path.expanduser", return_value=src):
+            mount = _parse_mount_spec("~/.x:ro", Path("/project"))
 
-        assert mount.source == str(home / ".claude")
-        assert mount.target == "/home/.claude"
+        assert mount is not None
+        assert mount.source == str(src)
+        assert mount.target == "/home/.x"
         assert mount.read_only is True
 
-    def test_explicit_src_dst(self, tmp_path: Path) -> None:
-        """Test parsing explicit src:dst mount like '~/a:/data'."""
-        home = tmp_path / "home"
-        mount = _parse_tool_mount("~/a:/data", home, "/home")
+    def test_home_tilde_nested_auto_dst(self, tmp_path: Path) -> None:
+        """~/.x/ide:ro → auto-dst for nested path."""
+        src = tmp_path / ".x" / "ide"
+        src.mkdir(parents=True)
+        with patch("yaas.container.Path.expanduser", return_value=src):
+            mount = _parse_mount_spec("~/.x/ide:ro", Path("/project"))
 
-        assert mount.source == str(Path("~/a").expanduser())
+        assert mount is not None
+        assert mount.source == str(src)
+        assert mount.target == "/home/.x/ide"
+        assert mount.read_only is True
+
+    def test_home_tilde_explicit_dst(self, tmp_path: Path) -> None:
+        """~/a:/data → explicit dst overrides auto-dst."""
+        src = tmp_path / "a"
+        src.mkdir()
+        with patch("yaas.container.Path.expanduser", return_value=src):
+            mount = _parse_mount_spec("~/a:/data", Path("/project"))
+
+        assert mount is not None
+        assert mount.source == str(src)
         assert mount.target == "/data"
         assert mount.read_only is False
 
-    def test_explicit_src_dst_readonly(self, tmp_path: Path) -> None:
-        """Test parsing explicit src:dst:ro mount like '~/a:/data:ro'."""
-        home = tmp_path / "home"
-        mount = _parse_tool_mount("~/a:/data:ro", home, "/home")
+    def test_home_tilde_explicit_dst_readonly(self, tmp_path: Path) -> None:
+        """~/a:/data:ro → explicit dst + read-only."""
+        src = tmp_path / "a"
+        src.mkdir()
+        with patch("yaas.container.Path.expanduser", return_value=src):
+            mount = _parse_mount_spec("~/a:/data:ro", Path("/project"))
 
-        assert mount.source == str(Path("~/a").expanduser())
+        assert mount is not None
+        assert mount.source == str(src)
         assert mount.target == "/data"
         assert mount.read_only is True
 
-    def test_nested_home_relative(self, tmp_path: Path) -> None:
-        """Test parsing nested home-relative path like '.claude/ide:ro'."""
-        home = tmp_path / "home"
-        mount = _parse_tool_mount(".claude/ide:ro", home, "/home")
+    def test_custom_sandbox_home(self, tmp_path: Path) -> None:
+        """Auto-dst uses custom sandbox_home when provided."""
+        src = tmp_path / ".config" / "app"
+        src.mkdir(parents=True)
+        with patch("yaas.container.Path.expanduser", return_value=src):
+            mount = _parse_mount_spec(
+                "~/.config/app", Path("/project"), sandbox_home="/sandbox"
+            )
 
-        assert mount.source == str(home / ".claude/ide")
-        assert mount.target == "/home/.claude/ide"
-        assert mount.read_only is True
+        assert mount is not None
+        assert mount.source == str(src)
+        assert mount.target == "/sandbox/.config/app"
+
+    def test_tilde_only(self) -> None:
+        """~ alone maps to sandbox home root."""
+        mount = _parse_mount_spec("~", Path("/project"))
+
+        assert mount is not None
+        assert mount.source == str(Path.home())
+        assert mount.target == "/home"
 
 
 class TestClipboardSupport:
@@ -824,19 +898,14 @@ class TestActiveToolScoping:
         self, mock_linux, clean_env, tmp_path: Path
     ) -> None:
         """active_tool set: tool's mounts are applied."""
-        home = tmp_path / "home"
-        home.mkdir()
-        (home / ".claude").mkdir()
-
         config = Config()
         config.active_tool = "claude"
         config.tools = {
-            "claude": ToolConfig(mounts=[".claude"]),
-            "aider": ToolConfig(mounts=[".aider"]),
+            "claude": ToolConfig(mounts=["~/.claude"]),
+            "aider": ToolConfig(mounts=["~/.aider"]),
         }
 
-        with patch("yaas.container.Path.home", return_value=home):
-            spec = build_container_spec(config, tmp_path, ["bash"])
+        spec = build_container_spec(config, tmp_path, ["bash"])
 
         targets = [m.target for m in spec.mounts]
         sandbox_home = spec.environment.get("HOME", "/home/user")
@@ -849,18 +918,13 @@ class TestActiveToolScoping:
         self, mock_linux, clean_env, tmp_path: Path
     ) -> None:
         """active_tool=None: no tool mounts applied (run/shell mode)."""
-        home = tmp_path / "home"
-        home.mkdir()
-        (home / ".claude").mkdir()
-
         config = Config()
         config.active_tool = None
         config.tools = {
-            "claude": ToolConfig(mounts=[".claude"]),
+            "claude": ToolConfig(mounts=["~/.claude"]),
         }
 
-        with patch("yaas.container.Path.home", return_value=home):
-            spec = build_container_spec(config, tmp_path, ["bash"])
+        spec = build_container_spec(config, tmp_path, ["bash"])
 
         targets = [m.target for m in spec.mounts]
         sandbox_home = spec.environment.get("HOME", "/home/user")
@@ -929,18 +993,13 @@ class TestActiveToolScoping:
         self, mock_linux, clean_env, tmp_path: Path
     ) -> None:
         """Tool mount with :ro modifier is mounted read-only."""
-        home = tmp_path / "home"
-        home.mkdir()
-        (home / ".claude" / "ide").mkdir(parents=True)
-
         config = Config()
         config.active_tool = "claude"
         config.tools = {
-            "claude": ToolConfig(mounts=[".claude/ide:ro"]),
+            "claude": ToolConfig(mounts=["~/.claude/ide:ro"]),
         }
 
-        with patch("yaas.container.Path.home", return_value=home):
-            spec = build_container_spec(config, tmp_path, ["bash"])
+        spec = build_container_spec(config, tmp_path, ["bash"])
 
         sandbox_home = spec.environment.get("HOME", "/home/user")
         ide_mount = next(
