@@ -41,9 +41,9 @@
 # Each tool becomes a CLI command: yaas <tool> [args...]
 # - command: executable to run (default: tool name). Supports multi-part commands.
 # - yolo_flags: flags appended in YOLO mode (use --no-yolo to disable)
-# - mounts: paths mounted from $HOME when running this tool
-#   - ".claude" → mounts ~/.claude to sandbox home
-#   - ".claude:ro" → same but read-only
+# - mounts: paths to bind-mount into the container
+#   - "~/.claude" → mounts ~/.claude to /home/.claude (auto-dst)
+#   - "~/.claude:ro" → same but read-only
 #   - "~/a:/data:ro" → explicit source:destination:mode
 # - env: environment variables for this tool
 #   - KEY = true → forward from host
@@ -63,23 +63,23 @@
 
 [tools.claude]
 yolo_flags = ["--dangerously-skip-permissions"]
-mounts = [".claude", ".claude.json", ".claude/ide:ro"]
+mounts = ["~/.claude", "~/.claude.json", "~/.claude/ide:ro"]
 env = { ANTHROPIC_API_KEY = true }
 
 # [tools.codex]
 # yolo_flags = ["--dangerously-bypass-approvals-and-sandbox"]
-# mounts = [".codex"]
+# mounts = ["~/.codex"]
 # env = { OPENAI_API_KEY = true }
 
 # [tools.gemini]
 # yolo_flags = ["--yolo"]
-# mounts = [".gemini"]
+# mounts = ["~/.gemini"]
 # env = { GEMINI_API_KEY = true, GOOGLE_API_KEY = true }
 
 # [tools.opencode]
 # yolo_flags = []
-# mounts = [".config/opencode", ".local/share/opencode"]
+# mounts = ["~/.config/opencode", "~/.local/share/opencode"]
 
 # [tools.aider]
 # yolo_flags = ["--yes"]
-# mounts = [".aider"]
+# mounts = ["~/.aider"]

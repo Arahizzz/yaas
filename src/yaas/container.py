@@ -223,7 +223,7 @@ def build_clone_work_spec(
     mounts.append(Mount(clone_volume, CLONE_WORKSPACE, type="volume"))
 
     # Add standard mounts (config, SSH, clipboard, mise, etc.)
-    _add_optional_mounts(config, mounts, groups, home, sandbox_home)
+    _add_optional_mounts(config, mounts, groups, home, sandbox_home, Path.cwd())
 
     # Build environment (use working_dir as project path for mise trust)
     environment = _build_environment(config, Path(working_dir), sandbox_home)
@@ -328,7 +328,7 @@ def _build_mounts(
         )
 
     # Add optional mounts
-    _add_optional_mounts(config, mounts, groups, home, sandbox_home)
+    _add_optional_mounts(config, mounts, groups, home, sandbox_home, project_dir)
 
     # User-defined mounts
     for mount_spec in config.mounts:
@@ -343,6 +343,7 @@ def _add_optional_mounts(
     groups: list[int],
     home: Path,
     sandbox_home: str,
+    project_dir: Path,
 ) -> None:
     """Add optional mounts based on config (git, SSH, clipboard, mise, tool mounts).
 
@@ -360,7 +361,7 @@ def _add_optional_mounts(
         tool = config.tools.get(config.active_tool)
         if tool:
             for mount_spec in tool.mounts:
-                mounts.append(_parse_tool_mount(mount_spec, home, sandbox_home))
+                mounts.append(_parse_mount_spec(mount_spec, project_dir, sandbox_home))
 
     if config.ssh_agent:
         _add_ssh_agent(mounts)
@@ -477,45 +478,6 @@ def _add_git_config_mounts(
             mounts.append(Mount(str(src), dst))
 
 
-def _parse_tool_mount(spec: str, home: Path, sandbox_home: str) -> Mount:
-    """Parse a tool mount spec.
-
-    Formats:
-    - ".claude" → src=~/.claude, dst=<sandbox_home>/.claude, rw
-    - ".claude:ro" → src=~/.claude, dst=<sandbox_home>/.claude, ro
-    - "~/a:/data" → src=~/a, dst=/data, rw
-    - "~/a:/data:ro" → src=~/a, dst=/data, ro
-    """
-    parts = spec.split(":")
-    read_only = False
-
-    if len(parts) == 1:
-        # ".claude" → home-relative, same relative dst
-        src = home / parts[0]
-        dst = f"{sandbox_home}/{parts[0]}"
-    elif len(parts) == 2 and parts[1] == "ro":
-        # ".claude:ro" → home-relative with read-only
-        src = home / parts[0]
-        dst = f"{sandbox_home}/{parts[0]}"
-        read_only = True
-    elif len(parts) == 2:
-        # "~/a:/data" → explicit src:dst
-        src = Path(parts[0]).expanduser()
-        dst = parts[1]
-    elif len(parts) == 3:
-        # "~/a:/data:ro" → explicit src:dst:ro
-        src = Path(parts[0]).expanduser()
-        dst = parts[1]
-        read_only = parts[2] == "ro"
-    else:
-        # Fallback: treat as home-relative
-        src = home / parts[0]
-        dst = f"{sandbox_home}/{parts[0]}"
-
-    if not src.exists():
-        logger.debug("Tool mount source does not exist, skipping: %s", src)
-
-    return Mount(str(src), dst, read_only=read_only)
 
 
 def _build_environment(
@@ -597,21 +559,59 @@ def _add_clipboard_environment(env: dict[str, str]) -> None:
         env["DISPLAY"] = x_display
 
 
-def _parse_mount_spec(spec: str, project_dir: Path) -> Mount:
-    """Parse mount spec like '~/data:/data:ro'."""
-    parts = spec.split(":")
+def _parse_mount_spec(spec: str, project_dir: Path, sandbox_home: str = "/home") -> Mount:
+    """Parse mount spec with unified format.
 
-    src = parts[0]
-    dst = parts[1] if len(parts) > 1 else src
-    opts = parts[2] if len(parts) > 2 else ""
+    Formats:
+    - "~/.claude"            → auto-dst: ~/.claude → /home/.claude
+    - "~/.claude:ro"         → auto-dst + read-only
+    - "~/a:/data"            → explicit src:dst
+    - "~/a:/data:ro"         → explicit src:dst + read-only
+    - "./rel:/container"     → relative to project_dir
+    - "/abs:/container:ro"   → absolute + read-only
+
+    Auto-dst: when no explicit destination is given and src starts with ~,
+    the destination is computed as sandbox_home + path relative to home.
+    Container destinations always start with /, so :ro as the second part
+    is unambiguous (it can't be a destination).
+    """
+    parts = spec.split(":")
+    read_only = False
+
+    if len(parts) == 1:
+        # "~/.claude" or "./data" — no dst, no opts
+        src = parts[0]
+        dst = None
+    elif len(parts) == 2 and not parts[1].startswith("/"):
+        # "~/.claude:ro" — second part is opts, not a dst
+        src = parts[0]
+        dst = None
+        read_only = "ro" in parts[1]
+    elif len(parts) == 2:
+        # "~/a:/data" — explicit src:dst
+        src = parts[0]
+        dst = parts[1]
+    elif len(parts) >= 3:
+        # "~/a:/data:ro" — explicit src:dst:opts
+        src = parts[0]
+        dst = parts[1]
+        read_only = "ro" in parts[2]
+    else:
+        src = parts[0]
+        dst = None
 
     # Expand ~ and relative paths
     src_path = Path(src).expanduser()
     if not src_path.is_absolute():
         src_path = project_dir / src_path
 
-    return Mount(
-        str(src_path),
-        dst,
-        read_only="ro" in opts,
-    )
+    # Auto-compute destination for ~ paths
+    if dst is None:
+        if src.startswith("~"):
+            # ~/X → sandbox_home/X (strip leading ~/)
+            rel = src.removeprefix("~").lstrip("/")
+            dst = f"{sandbox_home}/{rel}" if rel else sandbox_home
+        else:
+            dst = str(src_path)
+
+    return Mount(str(src_path), dst, read_only=read_only)
