@@ -426,6 +426,11 @@ def _add_ssh_agent(mounts: list[Mount]) -> None:
 
     mounts.append(Mount(str(sock_path), "/ssh-agent"))
 
+    # Mount known_hosts so SSH recognizes previously-verified hosts
+    known_hosts = Path.home() / ".ssh" / "known_hosts"
+    if known_hosts.exists():
+        mounts.append(Mount(str(known_hosts), "/etc/ssh/ssh_known_hosts", read_only=True))
+
 
 def _add_container_socket(mounts: list[Mount], groups: list[int]) -> None:
     """Mount container runtime socket for docker-in-docker.
