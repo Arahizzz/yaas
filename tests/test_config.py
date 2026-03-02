@@ -8,6 +8,7 @@ from yaas.config import (
     Config,
     ContainerSettings,
     ResourceLimits,
+    SecuritySettings,
     ToolConfig,
     load_config,
     load_tool_commands,
@@ -51,7 +52,9 @@ def test_container_settings_defaults() -> None:
     assert settings.network_mode is None
     assert settings.readonly_project is None
     assert settings.pid_mode is None
+    assert settings.lxcfs is None
     assert settings.resources is None
+    assert settings.security is None
     assert settings.mounts == []
     assert settings.env == {}
 
@@ -481,11 +484,13 @@ def test_resolve_does_not_mutate_original() -> None:
         env={"GLOBAL": "yes"},
         resources=ResourceLimits(memory="8g"),
         active_tool="claude",
-        tools={"claude": ToolConfig(
-            ssh_agent=True,
-            env={"TOOL": "yes"},
-            resources=ResourceLimits(memory="16g"),
-        )},
+        tools={
+            "claude": ToolConfig(
+                ssh_agent=True,
+                env={"TOOL": "yes"},
+                resources=ResourceLimits(memory="16g"),
+            )
+        },
     )
     result = resolve_effective_config(config)
 
@@ -622,3 +627,145 @@ env = { ANTHROPIC_API_KEY = true }
     assert tc.git_config is None
     assert tc.network_mode is None
     assert tc.resources is None
+
+
+# --- SecuritySettings tests ---
+
+
+def test_security_settings_defaults() -> None:
+    """Test that SecuritySettings defaults are all None (inherit semantics)."""
+    sec = SecuritySettings()
+    assert sec.capabilities is None
+    assert sec.seccomp_profile is None
+
+
+def test_config_default_security() -> None:
+    """Test that Config has concrete security defaults."""
+    config = Config()
+    assert config.security is not None
+    assert "CHOWN" in config.security.capabilities
+    assert "KILL" in config.security.capabilities
+    assert config.security.seccomp_profile is None
+
+
+def test_config_default_lxcfs() -> None:
+    """Test that Config defaults lxcfs to False."""
+    config = Config()
+    assert config.lxcfs is False
+
+
+def test_security_from_project_config() -> None:
+    """Test that [security] section is parsed from project config."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+lxcfs = true
+
+[security]
+capabilities = ["CHOWN", "KILL"]
+seccomp_profile = "/path/to/profile.json"
+""")
+        config = load_config(project_dir)
+
+    assert config.lxcfs is True
+    assert config.security.capabilities == ["CHOWN", "KILL"]
+    assert config.security.seccomp_profile == "/path/to/profile.json"
+
+
+def test_security_partial_override() -> None:
+    """Test that [security] section merges field-level (partial override)."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[security]
+seccomp_profile = "/custom/profile.json"
+""")
+        config = load_config(project_dir)
+
+    # seccomp_profile overridden
+    assert config.security.seccomp_profile == "/custom/profile.json"
+    # capabilities preserved from default
+    assert "CHOWN" in config.security.capabilities
+
+
+def test_security_use_runtime_defaults() -> None:
+    """Test that user can explicitly use runtime defaults with empty capabilities list."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[security]
+capabilities = []
+""")
+        config = load_config(project_dir)
+
+    assert config.security.capabilities == []
+
+
+def test_tool_security_override_from_toml() -> None:
+    """Test that tool [security] overrides are parsed from TOML."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.claude]
+mounts = [".claude"]
+
+[tools.claude.security]
+capabilities = ["CHOWN", "NET_RAW"]
+""")
+        config = load_config(project_dir)
+
+    tc = config.tools["claude"]
+    assert tc.security is not None
+    assert tc.security.capabilities == ["CHOWN", "NET_RAW"]
+    assert tc.security.seccomp_profile is None  # not overridden
+
+
+def test_resolve_security_partial_override() -> None:
+    """Test that tool security overrides only specified fields."""
+    config = Config(
+        active_tool="claude",
+        tools={
+            "claude": ToolConfig(
+                security=SecuritySettings(capabilities=["CHOWN", "NET_RAW"]),
+            )
+        },
+    )
+    result = resolve_effective_config(config)
+
+    # capabilities overridden by tool
+    assert result.security.capabilities == ["CHOWN", "NET_RAW"]
+    # seccomp_profile inherited from global (None)
+    assert result.security.seccomp_profile is None
+
+
+def test_resolve_security_does_not_mutate_original() -> None:
+    """Test that resolve_effective_config doesn't mutate original security."""
+    config = Config(
+        active_tool="claude",
+        tools={
+            "claude": ToolConfig(
+                security=SecuritySettings(capabilities=["CHOWN", "NET_RAW"]),
+            )
+        },
+    )
+    result = resolve_effective_config(config)
+
+    # Original unchanged
+    assert "NET_RAW" not in config.security.capabilities
+    # Resolved has override
+    assert result.security.capabilities == ["CHOWN", "NET_RAW"]
+
+
+def test_resolve_lxcfs_override() -> None:
+    """Test that tool lxcfs override works via generic bool field merge."""
+    config = Config(
+        lxcfs=False,
+        active_tool="claude",
+        tools={"claude": ToolConfig(lxcfs=True)},
+    )
+    result = resolve_effective_config(config)
+    assert result.lxcfs is True

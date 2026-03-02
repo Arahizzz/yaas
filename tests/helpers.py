@@ -1,13 +1,19 @@
 """Shared test utilities and helpers."""
 
+from __future__ import annotations
+
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from yaas.runtime import ContainerSpec, Mount
+
+if TYPE_CHECKING:
+    from yaas.config import Config
 
 # ============================================================
 # Platform markers
@@ -69,10 +75,18 @@ def make_spec(**overrides: object) -> ContainerSpec:
     return ContainerSpec(**defaults)  # type: ignore[arg-type]
 
 
+def make_config(**overrides: object) -> Config:
+    """Create a Config with sensible defaults for testing."""
+    from yaas.config import Config
+
+    return Config(**overrides)  # type: ignore[arg-type]
+
+
 __all__ = [
     "Mount",
     "linux_only",
     "macos_only",
+    "make_config",
     "make_spec",
     "mock_docker_socket",
     "mock_which",

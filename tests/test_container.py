@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from yaas.config import Config, ResourceLimits, ToolConfig
+from yaas.config import Config, ResourceLimits, SecuritySettings, ToolConfig
 from yaas.constants import CLONE_WORKSPACE, HOME_VOLUME, NIX_VOLUME, RUNTIME_IMAGE
 from yaas.container import (
     _add_worktree_mounts,
@@ -254,9 +254,7 @@ class TestParseMountSpecAutoDst:
         src = tmp_path / ".config" / "app"
         src.mkdir(parents=True)
         with patch("yaas.container.Path.expanduser", return_value=src):
-            mount = _parse_mount_spec(
-                "~/.config/app", Path("/project"), sandbox_home="/sandbox"
-            )
+            mount = _parse_mount_spec("~/.config/app", Path("/project"), sandbox_home="/sandbox")
 
         assert mount is not None
         assert mount.source == str(src)
@@ -738,9 +736,7 @@ class TestWorktreeMounts:
             skip = _add_worktree_mounts(mounts, project_dir, read_only=False)
 
         assert skip is True
-        project_mount = next(
-            (m for m in mounts if m.source == str(project_dir)), None
-        )
+        project_mount = next((m for m in mounts if m.source == str(project_dir)), None)
         assert project_mount is None
 
     def test_worktree_session_respects_readonly(self, tmp_path: Path) -> None:
@@ -815,17 +811,11 @@ class TestWorktreeMountsIntegration:
         """
         _ = is_worktree  # Unused, worktree detection is based on wt_base containment
         stack = ExitStack()
-        stack.enter_context(
-            patch("yaas.container.get_main_repo_root", return_value=main_repo)
-        )
-        stack.enter_context(
-            patch("yaas.container.get_worktree_base_dir", return_value=wt_base)
-        )
+        stack.enter_context(patch("yaas.container.get_main_repo_root", return_value=main_repo))
+        stack.enter_context(patch("yaas.container.get_worktree_base_dir", return_value=wt_base))
         return stack
 
-    def test_worktree_session_full_spec(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_worktree_session_full_spec(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Worktree session: build_container_spec includes main repo and wt_base,
         but not project_dir as a separate mount."""
         main_repo = tmp_path / "repo"
@@ -854,9 +844,7 @@ class TestWorktreeMountsIntegration:
         wt_mount = next(m for m in spec.mounts if m.source == str(wt_base))
         assert wt_mount.read_only is False
 
-    def test_normal_session_full_spec(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_normal_session_full_spec(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Normal session: build_container_spec includes project_dir and wt_base."""
         main_repo = tmp_path / "repo"
         main_repo.mkdir()
@@ -873,9 +861,7 @@ class TestWorktreeMountsIntegration:
         assert str(project_dir) in sources
         assert str(wt_base) in sources
 
-    def test_normal_session_no_worktrees(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_normal_session_no_worktrees(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Normal session without worktrees: only project_dir mounted."""
         main_repo = tmp_path / "repo"
         main_repo.mkdir()
@@ -894,9 +880,7 @@ class TestWorktreeMountsIntegration:
 class TestActiveToolScoping:
     """Tests for active_tool mount and env scoping."""
 
-    def test_active_tool_mounts_applied(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_active_tool_mounts_applied(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """active_tool set: tool's mounts are applied."""
         config = Config()
         config.active_tool = "claude"
@@ -914,9 +898,7 @@ class TestActiveToolScoping:
         # Other tool's mounts NOT applied
         assert f"{sandbox_home}/.aider" not in targets
 
-    def test_no_active_tool_no_tool_mounts(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_no_active_tool_no_tool_mounts(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """active_tool=None: no tool mounts applied (run/shell mode)."""
         config = Config()
         config.active_tool = None
@@ -930,9 +912,7 @@ class TestActiveToolScoping:
         sandbox_home = spec.environment.get("HOME", "/home/user")
         assert f"{sandbox_home}/.claude" not in targets
 
-    def test_active_tool_env_forwarded(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_active_tool_env_forwarded(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """active_tool set: tool's env vars are applied."""
         config = Config()
         config.active_tool = "claude"
@@ -946,9 +926,7 @@ class TestActiveToolScoping:
         assert spec.environment["ANTHROPIC_API_KEY"] == "sk-123"
         assert spec.environment["CUSTOM"] == "val"
 
-    def test_no_active_tool_no_tool_env(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_no_active_tool_no_tool_env(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """active_tool=None: tool env vars are NOT applied."""
         config = Config()
         config.active_tool = None
@@ -961,9 +939,7 @@ class TestActiveToolScoping:
 
         assert "ANTHROPIC_API_KEY" not in spec.environment
 
-    def test_global_env_always_applied(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_global_env_always_applied(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Global env is applied regardless of active_tool."""
         config = Config()
         config.active_tool = None
@@ -989,9 +965,7 @@ class TestActiveToolScoping:
 
         assert "MISSING_KEY" not in spec.environment
 
-    def test_tool_mount_readonly(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_tool_mount_readonly(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Tool mount with :ro modifier is mounted read-only."""
         config = Config()
         config.active_tool = "claude"
@@ -1009,9 +983,7 @@ class TestActiveToolScoping:
         assert ide_mount is not None
         assert ide_mount.read_only is True
 
-    def test_tool_overrides_network_mode(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_tool_overrides_network_mode(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Tool network_mode override is reflected in ContainerSpec."""
         config = Config(
             network_mode="bridge",
@@ -1021,9 +993,7 @@ class TestActiveToolScoping:
         spec = build_container_spec(config, tmp_path, ["bash"])
         assert spec.network_mode == "none"
 
-    def test_tool_overrides_readonly_project(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_tool_overrides_readonly_project(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Tool readonly_project override makes project mount read-only."""
         config = Config(
             readonly_project=False,
@@ -1039,9 +1009,7 @@ class TestActiveToolScoping:
         assert project_mount is not None
         assert project_mount.read_only is True
 
-    def test_tool_overrides_resources(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_tool_overrides_resources(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Tool resource overrides are reflected in ContainerSpec."""
         config = Config(
             resources=ResourceLimits(memory="8g", cpus=2.0),
@@ -1052,9 +1020,7 @@ class TestActiveToolScoping:
         assert spec.memory == "16g"
         assert spec.cpus == 2.0  # inherited from global
 
-    def test_tool_overrides_pid_mode(
-        self, mock_linux, clean_env, tmp_path: Path
-    ) -> None:
+    def test_tool_overrides_pid_mode(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Tool pid_mode override is reflected in ContainerSpec."""
         config = Config(
             pid_mode=None,
@@ -1063,3 +1029,143 @@ class TestActiveToolScoping:
         )
         spec = build_container_spec(config, tmp_path, ["bash"])
         assert spec.pid_mode == "host"
+
+
+# ============================================================
+# Security settings tests
+# ============================================================
+
+
+class TestSecurityPassthrough:
+    """Tests for security settings being passed to ContainerSpec."""
+
+    def test_default_security_in_spec(self, mock_linux, clean_env, tmp_path: Path) -> None:
+        """Default config produces capabilities in spec."""
+        config = Config()
+        spec = build_container_spec(config, tmp_path, ["bash"])
+
+        assert spec.capabilities is not None
+        assert "CHOWN" in spec.capabilities
+        assert "KILL" in spec.capabilities
+        assert spec.seccomp_profile is None
+
+    def test_custom_seccomp_profile(self, mock_linux, clean_env, tmp_path: Path) -> None:
+        """Custom seccomp profile path is passed to spec."""
+        config = Config(
+            security=SecuritySettings(
+                capabilities=["CHOWN"],
+                seccomp_profile="/etc/yaas/seccomp.json",
+            ),
+        )
+        spec = build_container_spec(config, tmp_path, ["bash"])
+        assert spec.seccomp_profile == "/etc/yaas/seccomp.json"
+
+    def test_none_capabilities_uses_runtime_defaults(
+        self, mock_linux, clean_env, tmp_path: Path
+    ) -> None:
+        """None capabilities means use runtime defaults (no flags generated)."""
+        config = Config(
+            security=SecuritySettings(capabilities=None),
+        )
+        spec = build_container_spec(config, tmp_path, ["bash"])
+        assert spec.capabilities is None
+
+    def test_clone_spec_gets_security(self, mock_linux, clean_env) -> None:
+        """Clone spec also gets security settings."""
+        config = Config()
+        spec = build_clone_spec(config, "https://github.com/user/repo.git", "vol", "repo")
+
+        assert spec.capabilities is not None
+        assert "CHOWN" in spec.capabilities
+
+    def test_clone_work_spec_gets_security(self, mock_linux, clean_env, tmp_path: Path) -> None:
+        """Clone work spec also gets security settings."""
+        config = Config()
+        spec = build_clone_work_spec(config, "vol", "repo", ["bash"])
+
+        assert spec.capabilities is not None
+
+    def test_tool_security_override(self, mock_linux, clean_env, tmp_path: Path) -> None:
+        """Tool security override is reflected in ContainerSpec."""
+        config = Config(
+            active_tool="claude",
+            tools={
+                "claude": ToolConfig(
+                    security=SecuritySettings(capabilities=["CHOWN", "NET_RAW"]),
+                )
+            },
+        )
+        spec = build_container_spec(config, tmp_path, ["bash"])
+        assert spec.capabilities == ["CHOWN", "NET_RAW"]
+
+
+# ============================================================
+# lxcfs mount tests
+# ============================================================
+
+
+class TestLxcfsMounts:
+    """Tests for lxcfs resource visibility mounts."""
+
+    def test_lxcfs_mounts_added_when_enabled(self, mock_linux, clean_env, tmp_path: Path) -> None:
+        """lxcfs mounts are added when enabled and available."""
+        config = Config(lxcfs=True)
+        original_exists = Path.exists
+
+        def lxcfs_exists(self: Path) -> bool:
+            if str(self).startswith("/var/lib/lxcfs/"):
+                return True
+            return original_exists(self)
+
+        with patch.object(Path, "exists", lxcfs_exists):
+            spec = build_container_spec(config, tmp_path, ["bash"])
+
+        lxcfs_mounts = [m for m in spec.mounts if m.source.startswith("/var/lib/lxcfs/")]
+        assert len(lxcfs_mounts) == 7
+        targets = {m.target for m in lxcfs_mounts}
+        assert "/proc/cpuinfo" in targets
+        assert "/proc/meminfo" in targets
+        assert "/proc/stat" in targets
+        assert all(m.read_only for m in lxcfs_mounts)
+
+    def test_lxcfs_skipped_when_disabled(self, mock_linux, clean_env, tmp_path: Path) -> None:
+        """lxcfs mounts are not added when disabled (default)."""
+        config = Config()
+        spec = build_container_spec(config, tmp_path, ["bash"])
+
+        lxcfs_mounts = [m for m in spec.mounts if m.source.startswith("/var/lib/lxcfs/")]
+        assert len(lxcfs_mounts) == 0
+
+    def test_lxcfs_skipped_on_non_linux(self, mock_macos, clean_env, tmp_path: Path) -> None:
+        """lxcfs mounts are skipped on non-Linux platforms."""
+        config = Config(lxcfs=True)
+        original_exists = Path.exists
+
+        def lxcfs_exists(self: Path) -> bool:
+            if str(self).startswith("/var/lib/lxcfs/"):
+                return True
+            return original_exists(self)
+
+        with patch.object(Path, "exists", lxcfs_exists):
+            spec = build_container_spec(config, tmp_path, ["bash"])
+
+        lxcfs_mounts = [m for m in spec.mounts if m.source.startswith("/var/lib/lxcfs/")]
+        assert len(lxcfs_mounts) == 0
+
+    def test_lxcfs_warns_when_not_installed(
+        self, mock_linux, clean_env, tmp_path: Path, caplog
+    ) -> None:
+        """lxcfs warns when enabled but /var/lib/lxcfs/proc doesn't exist."""
+        config = Config(lxcfs=True)
+        original_exists = Path.exists
+
+        def no_lxcfs(self: Path) -> bool:
+            if str(self).startswith("/var/lib/lxcfs/"):
+                return False
+            return original_exists(self)
+
+        with patch.object(Path, "exists", no_lxcfs):
+            spec = build_container_spec(config, tmp_path, ["bash"])
+
+        lxcfs_mounts = [m for m in spec.mounts if m.source.startswith("/var/lib/lxcfs/")]
+        assert len(lxcfs_mounts) == 0

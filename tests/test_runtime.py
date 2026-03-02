@@ -269,3 +269,99 @@ class TestDockerRuntime:
             assert result is True
             args = mock_run.call_args[0][0]
             assert args == ["docker", "volume", "rm", "-f", "test-volume"]
+
+
+# ============================================================
+# Security flag tests (shared by both runtimes)
+# ============================================================
+
+
+class TestSecurityFlags:
+    """Tests for capability and seccomp CLI flag generation."""
+
+    def test_podman_capabilities(self) -> None:
+        """Test Podman generates --cap-drop ALL and --cap-add flags from capabilities list."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec(capabilities=["CHOWN", "KILL"])
+            cmd = runtime._build_command(spec)
+
+        assert "--cap-drop" in cmd
+        assert cmd[cmd.index("--cap-drop") + 1] == "ALL"
+        assert "--cap-add" in cmd
+        cap_add_indices = [i for i, x in enumerate(cmd) if x == "--cap-add"]
+        cap_add_values = [cmd[i + 1] for i in cap_add_indices]
+        assert "CHOWN" in cap_add_values
+        assert "KILL" in cap_add_values
+
+    def test_docker_capabilities(self) -> None:
+        """Test Docker generates --cap-drop ALL and --cap-add flags from capabilities list."""
+        with mock_docker_socket(accessible=True):
+            runtime = DockerRuntime()
+
+        spec = make_spec(capabilities=["CHOWN", "KILL"])
+        cmd = runtime._build_command(spec)
+
+        assert "--cap-drop" in cmd
+        assert cmd[cmd.index("--cap-drop") + 1] == "ALL"
+        cap_add_indices = [i for i, x in enumerate(cmd) if x == "--cap-add"]
+        cap_add_values = [cmd[i + 1] for i in cap_add_indices]
+        assert "CHOWN" in cap_add_values
+        assert "KILL" in cap_add_values
+
+    def test_no_cap_flags_when_none(self) -> None:
+        """Test that no cap flags are generated when fields are None."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec()
+            cmd = runtime._build_command(spec)
+
+        assert "--cap-drop" not in cmd
+        assert "--cap-add" not in cmd
+
+    def test_podman_seccomp_profile(self) -> None:
+        """Test Podman generates --security-opt seccomp= flag."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec(seccomp_profile="/path/to/profile.json")
+            cmd = runtime._build_command(spec)
+
+        assert "--security-opt" in cmd
+        # Podman also has label=disable as first --security-opt, find the seccomp one
+        seccomp_opts = [
+            cmd[i + 1]
+            for i, x in enumerate(cmd)
+            if x == "--security-opt" and cmd[i + 1].startswith("seccomp=")
+        ]
+        assert len(seccomp_opts) == 1
+        assert seccomp_opts[0] == "seccomp=/path/to/profile.json"
+
+    def test_docker_seccomp_profile(self) -> None:
+        """Test Docker generates --security-opt seccomp= flag."""
+        with mock_docker_socket(accessible=True):
+            runtime = DockerRuntime()
+
+        spec = make_spec(seccomp_profile="/path/to/profile.json")
+        cmd = runtime._build_command(spec)
+
+        seccomp_opts = [
+            cmd[i + 1]
+            for i, x in enumerate(cmd)
+            if x == "--security-opt" and cmd[i + 1].startswith("seccomp=")
+        ]
+        assert len(seccomp_opts) == 1
+        assert seccomp_opts[0] == "seccomp=/path/to/profile.json"
+
+    def test_no_seccomp_flag_when_none(self) -> None:
+        """Test that no seccomp flag is generated when profile is None."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec()
+            cmd = runtime._build_command(spec)
+
+        seccomp_opts = [
+            cmd[i + 1]
+            for i, x in enumerate(cmd)
+            if x == "--security-opt" and cmd[i + 1].startswith("seccomp=")
+        ]
+        assert len(seccomp_opts) == 0
