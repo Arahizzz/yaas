@@ -32,6 +32,18 @@ class ResourceLimits:
 
 
 @dataclass
+class SecuritySettings:
+    """Container security settings.
+
+    For ToolConfig: None means "inherit from global config".
+    For Config: concrete defaults are set in the Config dataclass.
+    """
+
+    capabilities: list[str] | None = None  # Exact set of caps; None = runtime defaults
+    seccomp_profile: str | None = None  # None = runtime default, path = custom JSON
+
+
+@dataclass
 class ContainerSettings:
     """Container runtime settings shared by Config and ToolConfig.
 
@@ -46,7 +58,9 @@ class ContainerSettings:
     network_mode: str | None = None
     readonly_project: bool | None = None
     pid_mode: str | None = None
+    lxcfs: bool | None = None
     resources: ResourceLimits | None = None
+    security: SecuritySettings | None = None
     mounts: list[str] = field(default_factory=list)
     env: dict[str, str | bool] = field(default_factory=dict)
 
@@ -78,7 +92,22 @@ class Config(ContainerSettings):
     clipboard: bool = False
     network_mode: str = "bridge"
     readonly_project: bool = False
+    lxcfs: bool = False
     resources: ResourceLimits = field(default_factory=ResourceLimits)
+    security: SecuritySettings = field(
+        default_factory=lambda: SecuritySettings(
+            capabilities=[
+                "CHOWN",
+                "DAC_OVERRIDE",
+                "FOWNER",
+                "FSETID",
+                "KILL",
+                "NET_BIND_SERVICE",
+                "SETGID",
+                "SETUID",
+            ],
+        )
+    )
 
     # Container
     runtime: str | None = None  # None = auto-detect
@@ -96,7 +125,7 @@ class Config(ContainerSettings):
 
 # Precompute ContainerSettings field names for generic merge/resolve
 _CONTAINER_FIELDS = frozenset(f.name for f in dc_fields(ContainerSettings))
-_SPECIAL_FIELDS = frozenset({"mounts", "env", "resources"})
+_SPECIAL_FIELDS = frozenset({"mounts", "env", "resources", "security"})
 
 
 def _ensure_global_config() -> None:
@@ -167,13 +196,19 @@ def resolve_effective_config(config: Config) -> Config:
 
     # Resource overrides (field-level merge)
     if tool.resources is not None:
-        resolved.resources = (
-            replace(config.resources) if config.resources else ResourceLimits()
-        )
+        resolved.resources = replace(config.resources) if config.resources else ResourceLimits()
         for rf in dc_fields(ResourceLimits):
             rv = getattr(tool.resources, rf.name)
             if rv is not None:
                 setattr(resolved.resources, rf.name, rv)
+
+    # Security overrides (field-level merge)
+    if tool.security is not None:
+        resolved.security = replace(config.security) if config.security else SecuritySettings()
+        for sf in dc_fields(SecuritySettings):
+            sv = getattr(tool.security, sf.name)
+            if sv is not None:
+                setattr(resolved.security, sf.name, sv)
 
     # Env overlay (tool env on top of global env)
     if tool.env:
@@ -198,6 +233,11 @@ def _merge_dict(config: Config, data: dict[str, Any]) -> None:
             for rkey, rvalue in value.items():
                 if hasattr(config.resources, rkey):
                     setattr(config.resources, rkey, rvalue)
+        elif key == "security" and isinstance(value, dict) and config.security is not None:
+            # Handle nested security
+            for skey, svalue in value.items():
+                if hasattr(config.security, skey):
+                    setattr(config.security, skey, svalue)
         elif key == "tools" and isinstance(value, dict):
             _merge_tools(config.tools, value)
         elif hasattr(config, key):
@@ -224,7 +264,8 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
                 else:
                     logger.warning(
                         "Skipping tool '%s': %s must be a list of strings",
-                        name, field_name,
+                        name,
+                        field_name,
                     )
                     valid = False
                     break
@@ -234,8 +275,7 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
         if valid and "env" in tool_data:
             env_val = tool_data["env"]
             if isinstance(env_val, dict) and all(
-                isinstance(k, str) and isinstance(v, (str, bool))
-                for k, v in env_val.items()
+                isinstance(k, str) and isinstance(v, (str, bool)) for k, v in env_val.items()
             ):
                 parsed_env = env_val
             else:
@@ -274,3 +314,10 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
             for rkey, rvalue in tool_data["resources"].items():
                 if hasattr(existing.resources, rkey):
                     setattr(existing.resources, rkey, rvalue)
+
+        if "security" in tool_data and isinstance(tool_data["security"], dict):
+            if existing.security is None:
+                existing.security = SecuritySettings()
+            for skey, svalue in tool_data["security"].items():
+                if hasattr(existing.security, skey):
+                    setattr(existing.security, skey, svalue)

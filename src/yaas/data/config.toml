@@ -17,6 +17,7 @@
 # network_mode = "bridge"  # "host", "bridge", or "none"
 # readonly_project = false
 # pid_mode = "host"        # or omit for isolated PID namespace
+# lxcfs = false            # Mount lxcfs /proc files for resource visibility (Linux, requires lxcfs)
 
 # Auto-update
 # auto_pull_image = true   # Pull container image on every start
@@ -27,6 +28,13 @@
 # memory = "8g"
 # cpus = 2.0
 # pids_limit = 1000
+
+# Security hardening
+# When set, capabilities specifies the exact cap set (drops ALL, adds back each listed cap).
+# Omit to use container runtime defaults.
+# [security]
+# capabilities = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID"]
+# seccomp_profile = "/path/to/custom.json"  # omit for runtime default
 
 # Global mounts (always applied)
 # mounts = ["~/data:/data:ro"]
@@ -60,6 +68,8 @@
 #   [tools.<name>.resources]
 #   memory = "16g"
 #   cpus = 4.0
+#   [tools.<name>.security]
+#   capabilities = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID", "NET_RAW"]
 
 [tools.claude]
 yolo_flags = ["--dangerously-skip-permissions"]
