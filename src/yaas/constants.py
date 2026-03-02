@@ -30,5 +30,3 @@ MISE_CONFIG_PATH = CONFIG_DIR / "mise.toml"
 # Config file locations
 GLOBAL_CONFIG_PATH = CONFIG_DIR / "config.toml"
 PROJECT_CONFIG_NAME = ".yaas.toml"
-
-

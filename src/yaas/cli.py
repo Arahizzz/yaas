@@ -97,9 +97,7 @@ def run(
     worktree: str | None = typer.Option(
         None, "--worktree", "-w", help="Run in worktree", autocompletion=complete_worktree
     ),
-    clone: str | None = typer.Option(
-        None, "--clone", help="Clone git repo into ephemeral volume"
-    ),
+    clone: str | None = typer.Option(None, "--clone", help="Clone git repo into ephemeral volume"),
     ref: str | None = typer.Option(
         None, "--ref", "-r", help="Git ref (tag/branch) to checkout when cloning"
     ),
@@ -150,9 +148,7 @@ def shell(
     worktree: str | None = typer.Option(
         None, "--worktree", "-w", help="Run in worktree", autocompletion=complete_worktree
     ),
-    clone: str | None = typer.Option(
-        None, "--clone", help="Clone git repo into ephemeral volume"
-    ),
+    clone: str | None = typer.Option(None, "--clone", help="Clone git repo into ephemeral volume"),
     ref: str | None = typer.Option(
         None, "--ref", "-r", help="Git ref (tag/branch) to checkout when cloning"
     ),
@@ -226,9 +222,7 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
         ),
         network: NetworkMode | None = typer.Option(None, "--network", help="Network mode"),
         no_yolo: bool = typer.Option(False, "--no-yolo", help="Disable auto-confirm mode"),
-        memory: str | None = typer.Option(
-            None, "--memory", "-m", help="Memory limit (e.g., 8g)"
-        ),
+        memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
         cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
     ) -> None:
         """Run AI tool in sandbox with YOLO mode (auto-confirm)."""
@@ -288,8 +282,15 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
 
 # Reserved command names that tools cannot override
 _RESERVED_COMMANDS = {
-    "run", "shell", "config", "config-cmd", "reset-volumes",
-    "cleanup-clones", "pull-image", "upgrade-tools", "worktree",
+    "run",
+    "shell",
+    "config",
+    "config-cmd",
+    "reset-volumes",
+    "cleanup-clones",
+    "pull-image",
+    "upgrade-tools",
+    "worktree",
 }
 
 # Register tool commands from config
@@ -646,9 +647,7 @@ def worktree_list() -> None:
 
 @worktree_app.command(name="path")
 def worktree_path(
-    name: str = typer.Argument(
-        ..., help="Name of the worktree", autocompletion=complete_worktree
-    ),
+    name: str = typer.Argument(..., help="Name of the worktree", autocompletion=complete_worktree),
 ) -> None:
     """Print the filesystem path of a worktree."""
     try:
