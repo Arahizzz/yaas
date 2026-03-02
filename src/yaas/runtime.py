@@ -74,6 +74,10 @@ class ContainerSpec:
     cpus: float | None = None  # e.g., 2.0
     pids_limit: int | None = None  # e.g., 1000
 
+    # Security
+    capabilities: list[str] | None = None  # Exact cap set; triggers --cap-drop ALL + --cap-add each
+    seccomp_profile: str | None = None  # path to seccomp JSON profile
+
 
 class ContainerRuntime(Protocol):
     """Protocol for container runtimes."""
@@ -204,6 +208,16 @@ class PodmanRuntime:
         if spec.pids_limit:
             cmd.extend(["--pids-limit", str(spec.pids_limit)])
 
+        # Security: capabilities (explicit set = drop ALL + add back each)
+        if spec.capabilities is not None:
+            cmd.extend(["--cap-drop", "ALL"])
+            for cap in spec.capabilities:
+                cmd.extend(["--cap-add", cap])
+
+        # Security: seccomp profile
+        if spec.seccomp_profile:
+            cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
+
         # Image and command
         cmd.append(spec.image)
         cmd.extend(spec.command)
@@ -309,6 +323,16 @@ class DockerRuntime:
 
         if spec.pids_limit:
             cmd.extend(["--pids-limit", str(spec.pids_limit)])
+
+        # Security: capabilities (explicit set = drop ALL + add back each)
+        if spec.capabilities is not None:
+            cmd.extend(["--cap-drop", "ALL"])
+            for cap in spec.capabilities:
+                cmd.extend(["--cap-add", cap])
+
+        # Security: seccomp profile
+        if spec.seccomp_profile:
+            cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
 
         # Image and command
         cmd.append(spec.image)

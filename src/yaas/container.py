@@ -32,6 +32,16 @@ from .worktree import (
 
 logger = get_logger()
 
+LXCFS_PROC_FILES = (
+    "cpuinfo",
+    "meminfo",
+    "stat",
+    "uptime",
+    "diskstats",
+    "swaps",
+    "loadavg",
+)
+
 
 def extract_repo_name(url: str) -> str:
     """Extract repository name from a git URL.
@@ -142,6 +152,9 @@ def build_clone_spec(
         memory_swap=config.resources.memory_swap,
         cpus=config.resources.cpus,
         pids_limit=config.resources.pids_limit,
+        # Security
+        capabilities=config.security.capabilities,
+        seccomp_profile=config.security.seccomp_profile,
     )
 
 
@@ -193,6 +206,9 @@ def build_container_spec(
         memory_swap=config.resources.memory_swap,
         cpus=config.resources.cpus,
         pids_limit=config.resources.pids_limit,
+        # Security
+        capabilities=config.security.capabilities,
+        seccomp_profile=config.security.seccomp_profile,
     )
 
 
@@ -230,6 +246,9 @@ def build_clone_work_spec(
 
     container_user = f"{uid}:{gid}"
 
+    # lxcfs mounts for resource visibility
+    _add_lxcfs_mounts(config, mounts)  # clone_work_spec doesn't use _build_mounts
+
     return ContainerSpec(
         image=RUNTIME_IMAGE,
         command=command,
@@ -246,6 +265,9 @@ def build_clone_work_spec(
         memory_swap=config.resources.memory_swap,
         cpus=config.resources.cpus,
         pids_limit=config.resources.pids_limit,
+        # Security
+        capabilities=config.security.capabilities,
+        seccomp_profile=config.security.seccomp_profile,
     )
 
 
@@ -290,18 +312,34 @@ def _add_worktree_mounts(
         git_dir = main_repo / ".git"
         mounts.append(Mount(str(git_dir), str(git_dir)))
         # Mount worktree base dir using resolved path (covers this worktree + siblings)
-        mounts.append(
-            Mount(str(resolved_wt_base), str(resolved_wt_base), read_only=read_only)
-        )
+        mounts.append(Mount(str(resolved_wt_base), str(resolved_wt_base), read_only=read_only))
         return True
 
     # Normal session: mount worktree base dir if it exists (use resolved path)
     if wt_base.exists():
-        mounts.append(
-            Mount(str(resolved_wt_base), str(resolved_wt_base), read_only=read_only)
-        )
+        mounts.append(Mount(str(resolved_wt_base), str(resolved_wt_base), read_only=read_only))
 
     return False
+
+
+def _add_lxcfs_mounts(config: Config, mounts: list[Mount]) -> None:
+    """Add lxcfs bind mounts for resource visibility inside the container.
+
+    lxcfs virtualizes /proc files (cpuinfo, meminfo, etc.) so tools see
+    real cgroup limits instead of host resources. Requires lxcfs running on host.
+    """
+    if not is_linux() or not config.lxcfs:
+        return
+
+    lxcfs_base = Path("/var/lib/lxcfs/proc")
+    if not lxcfs_base.exists():
+        logger.warning("lxcfs enabled but /var/lib/lxcfs/proc not found — is lxcfs installed?")
+        return
+
+    for proc_file in LXCFS_PROC_FILES:
+        src = lxcfs_base / proc_file
+        if src.exists():
+            mounts.append(Mount(str(src), f"/proc/{proc_file}", read_only=True))
 
 
 def _build_mounts(
@@ -329,6 +367,9 @@ def _build_mounts(
 
     # Add optional mounts
     _add_optional_mounts(config, mounts, groups, home, sandbox_home, project_dir)
+
+    # lxcfs mounts for resource visibility
+    _add_lxcfs_mounts(config, mounts)
 
     # User-defined mounts
     for mount_spec in config.mounts:
@@ -416,9 +457,7 @@ def _add_clipboard_support(mounts: list[Mount]) -> None:
     # Clipboard via display sockets only works on Linux
     if not is_linux():
         if is_macos():
-            logger.warning(
-                "Clipboard not supported on macOS (no display server sockets available)"
-            )
+            logger.warning("Clipboard not supported on macOS (no display server sockets available)")
         return
 
     wayland_display = os.environ.get("WAYLAND_DISPLAY")
@@ -478,8 +517,6 @@ def _add_git_config_mounts(
         if src.exists():
             dst = f"{sandbox_home}/{config_path}"
             mounts.append(Mount(str(src), dst))
-
-
 
 
 def _build_environment(
