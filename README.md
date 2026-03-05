@@ -131,13 +131,13 @@ yaas config
 yaas pull-image
 
 # Manually upgrade mise-managed tools
-yaas upgrade-tools
+yaas mise-upgrade
 
 # Reset installed tools and cache (tools reinstall on next run)
-yaas reset-volumes
+yaas cleanup volumes
 
 # Remove orphaned clone volumes
-yaas cleanup-clones
+yaas cleanup clones
 ```
 
 ### Git Worktrees
@@ -190,7 +190,7 @@ This is useful for:
 If a container exits unexpectedly and leaves orphaned volumes, clean them up with:
 
 ```bash
-yaas cleanup-clones
+yaas cleanup clones
 ```
 
 ## Configuration
@@ -314,10 +314,10 @@ rust = "stable"
 
 ```bash
 # Manually upgrade all tools
-yaas upgrade-tools
+yaas mise-upgrade
 
 # Reset all tools (reinstalls on next run)
-yaas reset-volumes
+yaas cleanup volumes
 ```
 
 ## How It Works
@@ -347,7 +347,7 @@ YAAS uses named volumes to persist data across container sessions:
 - `yaas-home` persists the entire home directory (`/home`), including mise tool installations, cache, shell history, and tool-specific configs
 - `yaas-nix` stores the Nix store and database (`/nix`)
 
-This is why tools installed via mise don't need to be reinstalled every time you start a new container. Running `yaas reset-volumes` deletes these volumes, which will trigger a fresh tool installation on the next run.
+This is why tools installed via mise don't need to be reinstalled every time you start a new container. Running `yaas cleanup volumes` deletes these volumes, which will trigger a fresh tool installation on the next run.
 
 ## Clipboard and Image Pasting
 

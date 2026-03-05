@@ -72,6 +72,12 @@ worktree_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(worktree_app, name="worktree")
+cleanup_app = typer.Typer(
+    name="cleanup",
+    help="Clean up volumes and ephemeral resources",
+    no_args_is_help=True,
+)
+app.add_typer(cleanup_app, name="cleanup")
 console = Console()
 
 
@@ -236,13 +242,10 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
 # Reserved command names that tools cannot override
 _RESERVED_COMMANDS = {
     "run",
-    "shell",
     "config",
     "config-cmd",
-    "reset-volumes",
-    "cleanup-clones",
+    "cleanup",
     "pull-image",
-    "upgrade-tools",
     "worktree",
 }
 
@@ -304,8 +307,8 @@ def config_cmd() -> None:
 app.command(name="config")(config_cmd)
 
 
-@app.command(name="reset-volumes")
-def reset_volumes(
+@cleanup_app.command(name="volumes")
+def cleanup_volumes(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
     """Reset yaas volumes (removes home directory, tools, cache, and Nix store)."""
@@ -339,7 +342,7 @@ def reset_volumes(
     console.print("[green]Reset complete. Tools will be reinstalled on next run.[/]")
 
 
-@app.command(name="cleanup-clones")
+@cleanup_app.command(name="clones")
 def cleanup_clones(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
