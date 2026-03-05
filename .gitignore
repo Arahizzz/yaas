@@ -48,6 +48,9 @@ htmlcov/
 *.manifest
 *.spec
 
+# Project config (user-local)
+.yaas.toml
+
 # OS
 .DS_Store
 Thumbs.db
