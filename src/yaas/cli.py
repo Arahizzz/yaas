@@ -143,53 +143,6 @@ def run(
     _run_container(config, project_dir, ctx.args, worktree_name, clone_url=clone, clone_ref=ref)
 
 
-@app.command()
-def shell(
-    worktree: str | None = typer.Option(
-        None, "--worktree", "-w", help="Run in worktree", autocompletion=complete_worktree
-    ),
-    clone: str | None = typer.Option(None, "--clone", help="Clone git repo into ephemeral volume"),
-    ref: str | None = typer.Option(
-        None, "--ref", "-r", help="Git ref (tag/branch) to checkout when cloning"
-    ),
-    ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
-    git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
-    container_socket: bool = typer.Option(
-        False, "--container-socket", help="Mount docker/podman socket"
-    ),
-    clipboard: bool = typer.Option(
-        False, "--clipboard", help="Enable clipboard access for image pasting"
-    ),
-    network: NetworkMode | None = typer.Option(None, "--network", help="Network mode"),
-    memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
-    cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
-) -> None:
-    """Start interactive shell in sandbox."""
-    # Validate mutual exclusion
-    if clone and worktree:
-        raise typer.BadParameter("--clone and --worktree are mutually exclusive")
-
-    project_dir, worktree_name = _resolve_worktree(worktree)
-    config = load_config(project_dir)
-
-    if ssh_agent:
-        config.ssh_agent = True
-    if git_config:
-        config.git_config = True
-    if container_socket:
-        config.container_socket = True
-    if clipboard:
-        config.clipboard = True
-    if network is not None:
-        config.network_mode = network.value
-    if memory:
-        config.resources.memory = memory
-    if cpus:
-        config.resources.cpus = cpus
-
-    _run_container(config, project_dir, ["bash"], worktree_name, clone_url=clone, clone_ref=ref)
-
-
 def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
     """Create a tool-specific command (claude, aider, etc.)."""
 
@@ -442,19 +395,6 @@ def pull_image() -> None:
         console.print("[green]Image updated successfully.[/]")
     else:
         console.print("[red]Failed to pull image.[/]")
-        raise typer.Exit(1)
-
-
-@app.command(name="upgrade-tools")
-def upgrade_tools() -> None:
-    """Upgrade mise-managed tools in the container."""
-    project_dir = Path.cwd()
-    config = load_config(project_dir)
-    runtime = get_runtime(config.runtime)
-    if _upgrade_tools(config, project_dir, runtime):
-        console.print("[green]Tools upgraded successfully.[/]")
-    else:
-        console.print("[red]Failed to upgrade tools.[/]")
         raise typer.Exit(1)
 
 

@@ -899,7 +899,7 @@ class TestActiveToolScoping:
         assert f"{sandbox_home}/.aider" not in targets
 
     def test_no_active_tool_no_tool_mounts(self, mock_linux, clean_env, tmp_path: Path) -> None:
-        """active_tool=None: no tool mounts applied (run/shell mode)."""
+        """active_tool=None: no tool mounts applied (run mode)."""
         config = Config()
         config.active_tool = None
         config.tools = {

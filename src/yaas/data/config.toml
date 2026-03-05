@@ -71,6 +71,19 @@
 #   [tools.<name>.security]
 #   capabilities = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID", "NET_RAW"]
 
+[tools.shell]
+command = ["bash"]
+
+[tools.mise-upgrade]
+command = ["mise", "upgrade", "--yes"]
+auto_pull_image = false
+auto_upgrade_tools = false
+
+[tools.mise-prune]
+command = ["mise", "prune"]
+auto_pull_image = false
+auto_upgrade_tools = false
+
 [tools.claude]
 yolo_flags = ["--dangerously-skip-permissions"]
 mounts = ["~/.claude", "~/.claude.json", "~/.claude/ide:ro"]

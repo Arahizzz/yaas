@@ -61,6 +61,8 @@ class ContainerSettings:
     lxcfs: bool | None = None
     resources: ResourceLimits | None = None
     security: SecuritySettings | None = None
+    auto_pull_image: bool | None = None
+    auto_upgrade_tools: bool | None = None
     mounts: list[str] = field(default_factory=list)
     env: dict[str, str | bool] = field(default_factory=dict)
 
@@ -112,14 +114,14 @@ class Config(ContainerSettings):
     # Container
     runtime: str | None = None  # None = auto-detect
 
-    # Auto-update settings
+    # Override ContainerSettings auto-update defaults to concrete values
     auto_pull_image: bool = True  # Pull image on every start
     auto_upgrade_tools: bool = True  # Run mise upgrade on every start
 
     # Tool shortcuts (yaas claude, yaas aider, etc.)
     tools: dict[str, ToolConfig] = field(default_factory=dict)
 
-    # Active tool (set by CLI tool commands, None for run/shell)
+    # Active tool (set by CLI tool commands, None for run)
     active_tool: str | None = None
 
 
