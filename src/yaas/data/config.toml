@@ -23,6 +23,7 @@
 # Auto-update
 # auto_pull_image = true   # Pull container image on every start
 # auto_upgrade_tools = true # Run mise upgrade on every start
+# preamble = true           # Set $YAAS_PREAMBLE env var with sandbox info for AI agents
 
 # Resource limits
 # [resources]
@@ -87,14 +88,20 @@ auto_pull_image = false
 auto_upgrade_tools = false
 
 [tools.claude]
+command = ["claude", "--append-system-prompt", "$YAAS_PREAMBLE"]
 yolo_flags = ["--dangerously-skip-permissions"]
 mounts = ["~/.claude", "~/.claude.json", "~/.claude/ide:ro"]
 env = { ANTHROPIC_API_KEY = true }
 
 # [tools.codex]
+# command = ["codex", "-c", "developer_instructions=$YAAS_PREAMBLE"]
 # yolo_flags = ["--dangerously-bypass-approvals-and-sandbox"]
 # mounts = ["~/.codex"]
 # env = { OPENAI_API_KEY = true }
+
+# Tools below don't support appending to the system prompt via CLI flags.
+# The $YAAS_PREAMBLE env var is always available in yaas containers —
+# you can instruct the agent to read it via AGENTS.md or similar.
 
 # [tools.gemini]
 # yolo_flags = ["--yolo"]
