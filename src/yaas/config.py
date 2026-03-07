@@ -56,6 +56,7 @@ class ContainerSettings:
     container_socket: bool | None = None
     clipboard: bool | None = None
     network_mode: str | None = None
+    mount_project: bool | None = None
     readonly_project: bool | None = None
     pid_mode: str | None = None
     lxcfs: bool | None = None
@@ -93,6 +94,7 @@ class Config(ContainerSettings):
     container_socket: bool = False
     clipboard: bool = False
     network_mode: str = "bridge"
+    mount_project: bool = True
     readonly_project: bool = False
     lxcfs: bool = False
     resources: ResourceLimits = field(default_factory=ResourceLimits)

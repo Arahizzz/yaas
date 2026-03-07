@@ -160,7 +160,7 @@ def build_clone_spec(
 
 def build_container_spec(
     config: Config,
-    project_dir: Path,
+    project_dir: Path | None,
     command: list[str],
     *,
     tty: bool = True,
@@ -170,7 +170,7 @@ def build_container_spec(
 
     Args:
         config: Container configuration
-        project_dir: Project directory to mount
+        project_dir: Project directory to mount, or None to skip project mount
         command: Command to run in container
         tty: Allocate a pseudo-TTY (requires stdin to be a TTY)
         stdin_open: Keep stdin open (needed for piped input)
@@ -189,10 +189,12 @@ def build_container_spec(
     # Use real UID:GID. With --userns=keep-id, this maps correctly in rootless podman.
     container_user = f"{uid}:{gid}"
 
+    working_dir = str(project_dir) if project_dir else sandbox_home
+
     return ContainerSpec(
         image=RUNTIME_IMAGE,
         command=command,
-        working_dir=str(project_dir),
+        working_dir=working_dir,
         user=container_user,
         environment=environment,
         mounts=mounts,
@@ -344,7 +346,7 @@ def _add_lxcfs_mounts(config: Config, mounts: list[Mount]) -> None:
 
 def _build_mounts(
     config: Config,
-    project_dir: Path,
+    project_dir: Path | None,
     home: Path,
     sandbox_home: str,
 ) -> tuple[list[Mount], list[int]]:
@@ -352,28 +354,30 @@ def _build_mounts(
     mounts: list[Mount] = []
     groups: list[int] = []
 
-    # Add worktree mounts (may signal to skip the project_dir mount)
-    skip_project_mount = _add_worktree_mounts(mounts, project_dir, config.readonly_project)
+    if project_dir is not None:
+        # Add worktree mounts (may signal to skip the project_dir mount)
+        skip_project_mount = _add_worktree_mounts(mounts, project_dir, config.readonly_project)
 
-    # Project directory at real path (critical for docker-in-docker!)
-    if not skip_project_mount:
-        mounts.append(
-            Mount(
-                str(project_dir),
-                str(project_dir),
-                read_only=config.readonly_project,
+        # Project directory at real path (critical for docker-in-docker!)
+        if not skip_project_mount:
+            mounts.append(
+                Mount(
+                    str(project_dir),
+                    str(project_dir),
+                    read_only=config.readonly_project,
+                )
             )
-        )
 
     # Add optional mounts
-    _add_optional_mounts(config, mounts, groups, home, sandbox_home, project_dir)
+    fallback_dir = project_dir or Path.cwd()
+    _add_optional_mounts(config, mounts, groups, home, sandbox_home, fallback_dir)
 
     # lxcfs mounts for resource visibility
     _add_lxcfs_mounts(config, mounts)
 
     # User-defined mounts
     for mount_spec in config.mounts:
-        if mount := _parse_mount_spec(mount_spec, project_dir):
+        if mount := _parse_mount_spec(mount_spec, fallback_dir):
             mounts.append(mount)
 
     return mounts, groups
@@ -526,24 +530,26 @@ def _add_git_config_mounts(
 
 def _build_environment(
     config: Config,
-    project_dir: Path,
+    project_dir: Path | None,
     sandbox_home: str,
 ) -> dict[str, str]:
     """Build environment variables."""
     env: dict[str, str] = {
         "HOME": sandbox_home,
-        "PROJECT_PATH": str(project_dir),
         "YAAS": "1",
         # Make npm use XDG-compliant cache path
         "npm_config_cache": f"{sandbox_home}/.cache/npm",
         # Mise configuration
         "MISE_DATA_DIR": f"{sandbox_home}/.local/share/mise",
         "MISE_CACHE_DIR": f"{sandbox_home}/.cache/mise",
-        # Trust project mise configs automatically
-        "MISE_TRUSTED_CONFIG_PATHS": str(project_dir),
         # Auto-confirm trust prompts
         "MISE_YES": "1",
     }
+
+    if project_dir is not None:
+        env["PROJECT_PATH"] = str(project_dir)
+        # Trust project mise configs automatically
+        env["MISE_TRUSTED_CONFIG_PATHS"] = str(project_dir)
 
     # Forward terminal info
     if term := os.environ.get("TERM"):
