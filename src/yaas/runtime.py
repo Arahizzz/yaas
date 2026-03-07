@@ -6,7 +6,10 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from .config import Config
 
 from .logging import get_logger
 from .platform import get_container_socket_paths, is_linux
@@ -105,6 +108,10 @@ class ContainerRuntime(Protocol):
         """Remove a named volume. Returns True on success."""
         ...
 
+    def adjust_config(self, config: Config) -> None:
+        """Adjust config for runtime compatibility. Default: no-op."""
+        ...
+
 
 class PodmanRuntime:
     """Podman implementation using CLI subprocess.
@@ -152,6 +159,9 @@ class PodmanRuntime:
             logger.debug(f"Failed to remove volume {name}: {result.stderr}")
         return result.returncode == 0
 
+    def adjust_config(self, config: Config) -> None:
+        pass
+
     def _build_command(self, spec: ContainerSpec) -> list[str]:
         cmd = [*self.command_prefix, "run", "--rm"]
 
@@ -182,6 +192,11 @@ class PodmanRuntime:
         # Network
         if spec.network_mode:
             cmd.extend(["--network", spec.network_mode])
+
+        # Port publishing
+        if spec.ports:
+            for port in spec.ports:
+                cmd.extend(["-p", port])
 
         # PID namespace
         if spec.pid_mode:
@@ -222,6 +237,46 @@ class PodmanRuntime:
         cmd.append(spec.image)
         cmd.extend(spec.command)
 
+        return cmd
+
+
+class PodmanKrunRuntime(PodmanRuntime):
+    """Podman with libkrun MicroVM isolation.
+
+    Uses crun's krun handler to run containers inside lightweight VMs (KVM).
+    Requires crun-krun package (provides krun binary + libkrun.so).
+    """
+
+    name = "podman-krun"
+
+    def is_available(self) -> bool:
+        return super().is_available() and shutil.which("krun") is not None
+
+    # Features incompatible with libkrun MicroVMs (host sockets, FUSE mounts, etc.)
+    _INCOMPATIBLE_FEATURES: dict[str, str] = {
+        "lxcfs": "lxcfs (host FUSE mounts)",
+        "container_socket": "container socket passthrough (host Unix socket)",
+        "clipboard": "clipboard / display socket passthrough (host Unix socket)",
+        "ssh_agent": "SSH agent forwarding (host Unix socket)",
+    }
+
+    def adjust_config(self, config: Config) -> None:
+        for field, description in self._INCOMPATIBLE_FEATURES.items():
+            if getattr(config, field):
+                logger.warning(f"{description} is not supported with libkrun — disabling")
+                setattr(config, field, False)
+        if config.network_mode == "host":
+            logger.warning("--network host is not supported with libkrun — falling back to bridge")
+            config.network_mode = "bridge"
+        if config.security.capabilities is not None:
+            logger.warning("capability restrictions are not supported with libkrun — disabling")
+            config.security.capabilities = None
+
+    def _build_command(self, spec: ContainerSpec) -> list[str]:
+        cmd = super()._build_command(spec)
+        # Insert annotation before the image name (second-to-last group)
+        image_idx = cmd.index(spec.image)
+        cmd.insert(image_idx, "--annotation=run.oci.handler=krun")
         return cmd
 
 
@@ -274,6 +329,9 @@ class DockerRuntime:
         if result.returncode != 0:
             logger.debug(f"Failed to remove volume {name}: {result.stderr}")
         return result.returncode == 0
+
+    def adjust_config(self, config: Config) -> None:
+        pass
 
     def _build_command(self, spec: ContainerSpec) -> list[str]:
         cmd = [*self.command_prefix, "run", "--rm"]
@@ -343,8 +401,11 @@ class DockerRuntime:
 
 def get_runtime(preference: str | None = None) -> ContainerRuntime:
     """Get available container runtime, with optional preference."""
-    runtimes: list[tuple[str, type[PodmanRuntime] | type[DockerRuntime]]] = [
+    runtimes: list[
+        tuple[str, type[PodmanRuntime] | type[PodmanKrunRuntime] | type[DockerRuntime]]
+    ] = [
         ("podman", PodmanRuntime),
+        ("podman-krun", PodmanKrunRuntime),
         ("docker", DockerRuntime),
     ]
 

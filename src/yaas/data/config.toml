@@ -5,7 +5,7 @@
 # See https://github.com/arahizzz/yaas for full documentation
 
 # Container runtime (auto-detected if omitted)
-# runtime = "podman"  # or "docker"
+# runtime = "podman"  # or "podman-krun" (libkrun MicroVM) or "docker"
 
 # Features (what to mount/forward into the sandbox)
 # ssh_agent = false
@@ -67,6 +67,7 @@
 #   mount_project = false
 #   network_mode = "none"
 #   readonly_project = true
+#   runtime = "podman-krun"
 #   pid_mode = "host"
 #   [tools.<name>.resources]
 #   memory = "16g"

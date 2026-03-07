@@ -58,6 +58,7 @@ class ContainerSettings:
     network_mode: str | None = None
     mount_project: bool | None = None
     readonly_project: bool | None = None
+    runtime: str | None = None
     pid_mode: str | None = None
     lxcfs: bool | None = None
     resources: ResourceLimits | None = None
@@ -113,9 +114,6 @@ class Config(ContainerSettings):
         )
     )
 
-    # Container
-    runtime: str | None = None  # None = auto-detect
-
     # Override ContainerSettings auto-update defaults to concrete values
     auto_pull_image: bool = True  # Pull image on every start
     preamble: bool = True  # Set YAAS_PREAMBLE env var with sandbox info
@@ -130,7 +128,7 @@ class Config(ContainerSettings):
 
 # Precompute ContainerSettings field names for generic merge/resolve
 _CONTAINER_FIELDS = frozenset(f.name for f in dc_fields(ContainerSettings))
-_SPECIAL_FIELDS = frozenset({"mounts", "env", "resources", "security"})
+_SPECIAL_FIELDS = frozenset({"mounts", "ports", "env", "resources", "security"})
 
 
 def _ensure_global_config() -> None:

@@ -9,7 +9,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from .completions import NetworkMode, complete_worktree
+from .completions import NetworkMode, RuntimeChoice, complete_worktree
 from .config import (
     _CONTAINER_FIELDS,
     _SPECIAL_FIELDS,
@@ -119,8 +119,12 @@ def run(
     memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
     mount: list[str] | None = typer.Option(None, "--mount", "-v", help="Ad-hoc mount (mount spec)"),
+    port: list[str] | None = typer.Option(
+        None, "--port", "-p", help="Publish port (host:container)"
+    ),
     env: list[str] | None = typer.Option(None, "--env", "-e", help="Ad-hoc env (KEY=VALUE or KEY)"),
     no_project: bool = typer.Option(False, "--no-project", help="Don't mount project directory"),
+    runtime: RuntimeChoice | None = typer.Option(None, "--runtime", help="Container runtime"),
 ) -> None:
     """Run a command in the sandbox."""
     if not ctx.args:
@@ -154,7 +158,9 @@ def run(
         config.resources.cpus = cpus
     if no_project:
         config.mount_project = False
-    _apply_cli_mounts_env(config, mount, env)
+    if runtime:
+        config.runtime = runtime.value
+    _apply_cli_overrides(config, mount, port, env)
 
     _run_container(config, project_dir, ctx.args, worktree_name, clone_url=clone, clone_ref=ref)
 
@@ -196,12 +202,16 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
         mount: list[str] | None = typer.Option(
             None, "--mount", "-v", help="Ad-hoc mount (mount spec)"
         ),
+        port: list[str] | None = typer.Option(
+            None, "--port", "-p", help="Publish port (host:container)"
+        ),
         env: list[str] | None = typer.Option(
             None, "--env", "-e", help="Ad-hoc env (KEY=VALUE or KEY)"
         ),
         no_project: bool = typer.Option(
             False, "--no-project", help="Don't mount project directory"
         ),
+        runtime: RuntimeChoice | None = typer.Option(None, "--runtime", help="Container runtime"),
     ) -> None:
         """Run AI tool in sandbox with YOLO mode (auto-confirm)."""
         # Validate mutual exclusion
@@ -236,7 +246,9 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
             config.resources.cpus = cpus
         if no_project:
             config.mount_project = False
-        _apply_cli_mounts_env(config, mount, env)
+        if runtime:
+            config.runtime = runtime.value
+        _apply_cli_overrides(config, mount, port, env)
 
         # Build command with YOLO flags (unless --no-yolo)
         tc = config.tools.get(tool)
@@ -503,14 +515,17 @@ def _run_clone_workflow(
     raise typer.Exit(exit_code)
 
 
-def _apply_cli_mounts_env(
+def _apply_cli_overrides(
     config: Config,
     mounts: list[str] | None,
+    ports: list[str] | None,
     envs: list[str] | None,
 ) -> None:
-    """Merge ad-hoc CLI --mount and --env values into config."""
+    """Merge ad-hoc CLI --mount, --port, and --env values into config."""
     if mounts:
         config.mounts.extend(mounts)
+    if ports:
+        config.ports.extend(ports)
     if envs:
         for entry in envs:
             if "=" in entry:
@@ -530,6 +545,8 @@ def _run_container(
 ) -> None:
     """Build spec and run container."""
     runtime = get_runtime(config.runtime)
+    config.runtime = runtime.name
+    runtime.adjust_config(config)
 
     # Show startup header
     print_startup_header()

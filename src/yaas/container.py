@@ -206,6 +206,7 @@ def build_container_spec(
         stdin_open=stdin_open,
         groups=groups or None,
         pid_mode=config.pid_mode,
+        ports=ports or None,
         # Resource limits
         memory=config.resources.memory,
         memory_swap=config.resources.memory_swap,
@@ -241,7 +242,8 @@ def build_clone_work_spec(
     # Prepend clone volume mount and override working dir / project env
     clone_mount = Mount(clone_volume, CLONE_WORKSPACE, type="volume")
     env = {**spec.environment, "PROJECT_PATH": working_dir}
-    return replace(spec, working_dir=working_dir, mounts=[clone_mount, *spec.mounts], environment=env)
+    mounts = [clone_mount, *spec.mounts]
+    return replace(spec, working_dir=working_dir, mounts=mounts, environment=env)
 
 
 def _add_worktree_mounts(

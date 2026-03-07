@@ -762,6 +762,17 @@ def test_resolve_security_does_not_mutate_original() -> None:
     assert result.security.capabilities == ["CHOWN", "NET_RAW"]
 
 
+def test_resolve_runtime_override() -> None:
+    """Test that tool runtime overrides global runtime."""
+    config = Config(
+        runtime=None,
+        active_tool="claude",
+        tools={"claude": ToolConfig(runtime="podman-krun")},
+    )
+    result = resolve_effective_config(config)
+    assert result.runtime == "podman-krun"
+
+
 def test_resolve_lxcfs_override() -> None:
     """Test that tool lxcfs override works via generic bool field merge."""
     config = Config(

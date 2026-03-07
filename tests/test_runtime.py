@@ -3,8 +3,8 @@
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
-from tests.helpers import make_spec, mock_docker_socket, mock_which
-from yaas.runtime import DockerRuntime, Mount, PodmanRuntime
+from tests.helpers import make_config, make_spec, mock_docker_socket, mock_which
+from yaas.runtime import DockerRuntime, Mount, PodmanKrunRuntime, PodmanRuntime
 
 # ============================================================
 # Mount and ContainerSpec dataclass tests
@@ -146,6 +146,120 @@ class TestPodmanRuntime:
             result = runtime.remove_volume("test-volume")
 
             assert result is False
+
+
+# ============================================================
+# PodmanKrunRuntime tests
+# ============================================================
+
+
+class TestPodmanKrunRuntime:
+    """Tests for PodmanKrunRuntime."""
+
+    def test_build_command_has_annotation(self) -> None:
+        """Test that krun annotation is added before image name."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+            spec = make_spec(command=["echo", "hello"])
+            cmd = runtime._build_command(spec)
+
+        assert "--annotation=run.oci.handler=krun" in cmd
+        # Annotation must appear before the image
+        ann_idx = cmd.index("--annotation=run.oci.handler=krun")
+        img_idx = cmd.index("test:latest")
+        assert ann_idx < img_idx
+
+    def test_inherits_podman_flags(self) -> None:
+        """Test that krun runtime preserves all Podman-specific flags."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+            spec = make_spec()
+            cmd = runtime._build_command(spec)
+
+        assert "--userns=keep-id" in cmd
+        assert "podman" == cmd[0]
+
+    def test_available_with_krun(self) -> None:
+        """Test is_available when both podman and krun are present."""
+        with ExitStack() as stack:
+            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            stack.enter_context(
+                mock_which({"podman": "/usr/bin/podman", "krun": "/usr/bin/krun"})
+            )
+            runtime = PodmanKrunRuntime()
+            assert runtime.is_available() is True
+
+    def test_not_available_without_krun(self) -> None:
+        """Test is_available when krun binary is missing."""
+        with ExitStack() as stack:
+            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            stack.enter_context(mock_which({"podman": "/usr/bin/podman", "krun": None}))
+            runtime = PodmanKrunRuntime()
+            assert runtime.is_available() is False
+
+    def test_not_available_on_non_linux(self) -> None:
+        """Test is_available on non-Linux platforms."""
+        with ExitStack() as stack:
+            stack.enter_context(patch("yaas.runtime.is_linux", return_value=False))
+            stack.enter_context(
+                mock_which({"podman": "/usr/bin/podman", "krun": "/usr/bin/krun"})
+            )
+            runtime = PodmanKrunRuntime()
+            assert runtime.is_available() is False
+
+    def test_adjust_config_disables_lxcfs(self) -> None:
+        """Test that adjust_config disables lxcfs for MicroVM compatibility."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(lxcfs=True)
+        runtime.adjust_config(config)
+        assert config.lxcfs is False
+
+    def test_adjust_config_noop_when_lxcfs_disabled(self) -> None:
+        """Test that adjust_config is a no-op when lxcfs is already disabled."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(lxcfs=False)
+        runtime.adjust_config(config)
+        assert config.lxcfs is False
+
+    def test_adjust_config_disables_network_host(self) -> None:
+        """Test that adjust_config falls back from host to bridge networking."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(network_mode="host")
+        runtime.adjust_config(config)
+        assert config.network_mode == "bridge"
+
+    def test_adjust_config_preserves_bridge_network(self) -> None:
+        """Test that adjust_config leaves bridge networking unchanged."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(network_mode="bridge")
+        runtime.adjust_config(config)
+        assert config.network_mode == "bridge"
+
+    def test_adjust_config_disables_capabilities(self) -> None:
+        """Test that adjust_config clears capability restrictions for MicroVM."""
+        from yaas.config import SecuritySettings
+
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(
+            security=SecuritySettings(capabilities=["CHOWN", "DAC_OVERRIDE"]),
+        )
+        runtime.adjust_config(config)
+        assert config.security.capabilities is None
+
+    def test_adjust_config_noop_when_no_capabilities(self) -> None:
+        """Test that adjust_config is a no-op when capabilities are already None."""
+        from yaas.config import SecuritySettings
+
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(security=SecuritySettings(capabilities=None))
+        runtime.adjust_config(config)
+        assert config.security.capabilities is None
 
 
 # ============================================================
