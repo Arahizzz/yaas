@@ -70,4 +70,10 @@ fi
 # Activate mise - this adds shims to PATH and loads env vars from [env] section
 eval "$(mise activate bash)"
 
-exec "$@"
+# Expand environment variables in command arguments
+# (e.g. $YAAS_PREAMBLE in tool commands like --append-system-prompt $YAAS_PREAMBLE)
+args=()
+for arg in "$@"; do
+    args+=("$(envsubst <<< "$arg")")
+done
+exec "${args[@]}"

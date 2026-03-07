@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # VCS and security
     git git-lfs openssh-client gnupg ca-certificates \
     # Utilities
-    curl wget unzip zip xz-utils zstd \
+    curl wget unzip zip xz-utils zstd gettext-base \
     sudo less vim nano \
     # Locale support (often needed)
     locales icu-devtools \
