@@ -15,6 +15,7 @@
 
 # Isolation
 # network_mode = "bridge"  # "host", "bridge", or "none"
+# mount_project = true     # Set to false to skip project directory mount
 # readonly_project = false
 # pid_mode = "host"        # or omit for isolated PID namespace
 # lxcfs = false            # Mount lxcfs /proc files for resource visibility (Linux, requires lxcfs)
@@ -62,6 +63,7 @@
 #   git_config = true
 #   container_socket = false
 #   clipboard = false
+#   mount_project = false
 #   network_mode = "none"
 #   readonly_project = true
 #   pid_mode = "host"

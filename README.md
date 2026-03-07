@@ -111,6 +111,43 @@ yaas claude --ssh-agent --git-config -p "Fix the bug"
 #           yaas options             passed to claude
 ```
 
+### Ad-Hoc Mounts and Environment Variables
+
+You can pass extra mounts and environment variables directly from the CLI without editing config files:
+
+```bash
+# Mount a directory into the container
+yaas claude -v ~/datasets:/data
+
+# Set or forward environment variables
+yaas claude -e MY_VAR=hello -e SECRET_KEY
+
+# Combine both
+yaas run -v /tmp/input:/input:ro -e API_URL=http://localhost:8080 -- python process.py
+```
+
+`-e KEY=VALUE` sets a hardcoded value; `-e KEY` forwards the variable from the host (same as `KEY = true` in config).
+
+### No-Project Mode
+
+By default, YAAS mounts your current project directory into the container. Use `--no-project` to skip this and start in the container's home directory instead:
+
+```bash
+# Interactive shell without any project mount
+yaas shell --no-project
+
+# Run a tool without a project
+yaas claude --no-project
+```
+
+This can also be set per-tool in config (useful for tools that don't need a project context):
+
+```toml
+[tools.my-hub]
+command = ["my-tool", "hub"]
+mount_project = false
+```
+
 ### General Commands
 
 ```bash
@@ -211,6 +248,7 @@ clipboard = false          # Enable clipboard access for image pasting
 
 # Isolation
 network_mode = "bridge"    # "host", "bridge" (default), or "none"
+mount_project = true       # Set to false to skip project directory mount
 readonly_project = false   # Mount project directory as read-only
 pid_mode = "host"          # PID namespace: "host" or isolated (default, omit)
 
