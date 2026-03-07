@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from dataclasses import replace
 from importlib import resources
 from pathlib import Path
 
@@ -228,51 +229,19 @@ def build_clone_work_spec(
     """Build container spec for working in a cloned repository.
 
     This is used for the work container in clone mode, after the repo has been
-    cloned into the ephemeral volume.
+    cloned into the ephemeral volume. Delegates to build_container_spec with
+    no project mount, then prepends the clone volume and adjusts the working dir.
     """
-    config = resolve_effective_config(config)
-    uid, gid = get_uid_gid()
-    home = Path.home()
-    sandbox_home = "/home"
     working_dir = f"{CLONE_WORKSPACE}/{repo_name}"
 
-    mounts: list[Mount] = []
-    groups: list[int] = []
-
-    # Mount clone volume at /workspace
-    mounts.append(Mount(clone_volume, CLONE_WORKSPACE, type="volume"))
-
-    # Add standard mounts (config, SSH, clipboard, mise, etc.)
-    _add_optional_mounts(config, mounts, groups, home, sandbox_home, Path.cwd())
-
-    # Build environment (use working_dir as project path for mise trust)
-    environment = _build_environment(config, Path(working_dir), sandbox_home)
-
-    container_user = f"{uid}:{gid}"
-
-    # lxcfs mounts for resource visibility
-    _add_lxcfs_mounts(config, mounts)  # clone_work_spec doesn't use _build_mounts
-
-    return ContainerSpec(
-        image=RUNTIME_IMAGE,
-        command=command,
-        working_dir=working_dir,
-        user=container_user,
-        environment=environment,
-        mounts=mounts,
-        network_mode=config.network_mode,
-        tty=tty,
-        stdin_open=stdin_open,
-        groups=groups or None,
-        pid_mode=config.pid_mode,
-        memory=config.resources.memory,
-        memory_swap=config.resources.memory_swap,
-        cpus=config.resources.cpus,
-        pids_limit=config.resources.pids_limit,
-        # Security
-        capabilities=config.security.capabilities,
-        seccomp_profile=config.security.seccomp_profile,
+    spec = build_container_spec(
+        config, None, command, tty=tty, stdin_open=stdin_open,
     )
+
+    # Prepend clone volume mount and override working dir / project env
+    clone_mount = Mount(clone_volume, CLONE_WORKSPACE, type="volume")
+    env = {**spec.environment, "PROJECT_PATH": working_dir}
+    return replace(spec, working_dir=working_dir, mounts=[clone_mount, *spec.mounts], environment=env)
 
 
 def _add_worktree_mounts(
