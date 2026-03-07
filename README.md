@@ -243,12 +243,27 @@ yaas cleanup clones
 
 ## Configuration
 
-YAAS uses a two-level configuration system. Global settings go in `~/.config/yaas/config.toml`, and project-specific overrides go in `.yaas.toml` at your project root. Project config takes precedence.
+YAAS uses a layered configuration system with two config files and per-tool overrides:
+
+| Source | Location | Scope |
+|--------|----------|-------|
+| Global config | `~/.config/yaas/config.toml` | All projects |
+| Project config | `.yaas.toml` in project root | Current project |
+
+Both files share the same format and can contain both top-level settings and `[tools.*]` sections. Values merge with later sources taking precedence:
+
+1. **Global config** — defaults for all projects
+2. **Project config** — overrides global settings for this project
+3. **Per-tool overrides** — `[tools.*]` sections override default settings when running that tool
+4. **CLI flags** — `--runtime`, `--network`, `--memory`, etc. override everything
+
+Tool definitions also merge field-by-field: if the global config defines `[tools.claude]` with `mounts` and `yolo_flags`, and the project `.yaas.toml` only sets `[tools.claude] network_mode = "none"`, the mounts and yolo_flags are preserved.
 
 ### All Options
 
 ```toml
-# Container runtime: "podman" or "docker" (auto-detected if omitted)
+# Container runtime (auto-detected if omitted)
+# "podman", "podman-krun" (libkrun MicroVM), or "docker"
 runtime = "podman"
 
 # Feature flags
@@ -289,7 +304,7 @@ MY_VAR = "value"
 
 ### Tool Configuration
 
-Each tool can declare its own `mounts` and `env`. These are **only applied when running that specific tool** (e.g. `yaas claude`), not for `yaas run` or `yaas shell`.
+Each tool becomes a CLI command (`yaas claude`, `yaas codex`, etc.) and can declare its own `command`, `yolo_flags`, `mounts`, and `env`. Tool-specific mounts and env are **only applied when running that tool**, not for `yaas run` or `yaas shell`.
 
 ```toml
 [tools.claude]
@@ -315,6 +330,38 @@ env = { OPENAI_API_KEY = true }
 - `KEY = "value"` → set `KEY` to a hardcoded value
 
 **Variable expansion:** The entrypoint expands all `$ENV_VAR` references in command arguments via `envsubst`, so any environment variable can be referenced in tool commands (e.g. `$YAAS_PREAMBLE`).
+
+### Per-Tool Setting Overrides
+
+Tools can also override any container setting. This is useful when different tools need different isolation levels or runtimes:
+
+```toml
+[tools.claude]
+command = ["claude", "--append-system-prompt", "$YAAS_PREAMBLE"]
+yolo_flags = ["--dangerously-skip-permissions"]
+mounts = [".claude", ".claude.json", ".claude/ide:ro"]
+env = { ANTHROPIC_API_KEY = true }
+
+# Container setting overrides for this tool
+runtime = "podman-krun"       # Use MicroVM isolation
+ssh_agent = true
+git_config = true
+network_mode = "host"
+readonly_project = true
+pid_mode = "host"
+mount_project = false
+
+# Resource overrides (field-level merge with global)
+[tools.claude.resources]
+memory = "16g"
+cpus = 4.0
+
+# Security overrides (field-level merge with global)
+[tools.claude.security]
+capabilities = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID", "NET_RAW"]
+```
+
+Resource and security overrides merge at the field level — only the fields you specify are overridden, the rest inherit from the global/project config.
 
 ## Mise Integration
 
