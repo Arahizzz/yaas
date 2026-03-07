@@ -185,6 +185,8 @@ def build_container_spec(
 
     # Build environment
     environment = _build_environment(config, project_dir, sandbox_home)
+    if config.preamble:
+        environment["YAAS_PREAMBLE"] = _build_preamble(config, project_dir, mounts)
 
     # Use real UID:GID. With --userns=keep-id, this maps correctly in rootless podman.
     container_user = f"{uid}:{gid}"
@@ -526,6 +528,77 @@ def _add_git_config_mounts(
         if src.exists():
             dst = f"{sandbox_home}/{config_path}"
             mounts.append(Mount(str(src), dst))
+
+
+def _build_preamble(
+    config: Config, project_dir: Path | None, mounts: list[Mount],
+) -> str:
+    """Generate a sandbox preamble describing the container environment."""
+    lines = [
+        "You are running inside a YAAS (Yet Another Agent Sandbox) container.",
+        "The purpose of this sandbox is to allow you to run commands, install tools,",
+        "and make changes freely without affecting the host system.",
+        "You have sudo access. Use it when needed without hesitation.",
+        "However, apply caution when working with user's files in mounted directories —",
+        "those changes affect the real host filesystem.",
+        "Project: https://github.com/arahizzz/yaas",
+        "",
+        "Environment:",
+    ]
+
+    # Network
+    lines.append(f"- Network: {config.network_mode}")
+
+    # Resource limits
+    mem = config.resources.memory or "unlimited"
+    cpu = str(config.resources.cpus) if config.resources.cpus else "unlimited"
+    pids = str(config.resources.pids_limit) if config.resources.pids_limit else "unlimited"
+    lines.append(f"- Memory limit: {mem}")
+    lines.append(f"- CPU limit: {cpu}")
+    lines.append(f"- PID limit: {pids}")
+
+    # Project
+    if project_dir is not None:
+        ro = "read-only" if config.readonly_project else "read-write"
+        lines.append(f"- Project: {project_dir} ({ro})")
+    else:
+        lines.append("- Project: none (no project directory mounted)")
+
+    # Mounts
+    bind_mounts = [m for m in mounts if m.type == "bind"]
+    if bind_mounts:
+        lines.append("")
+        lines.append("Bind mounts (host filesystem — changes are reflected on host):")
+        for m in bind_mounts:
+            ro_label = " (read-only)" if m.read_only else ""
+            lines.append(f"- {m.target}{ro_label}")
+
+    volume_mounts = [m for m in mounts if m.type == "volume"]
+    if volume_mounts:
+        lines.append("")
+        lines.append("Volumes (persistent across container restarts):")
+        for m in volume_mounts:
+            lines.append(f"- {m.target}")
+
+    lines.append("")
+    lines.append(
+        "Files outside mounted directories are container-local"
+        " and will be lost when the container stops."
+    )
+
+    lines.append("")
+    lines.append("Installing tools:")
+    lines.append("- Use `nix run nixpkgs#<package>` for quick one-off tool invocations")
+    lines.append("  when a tool is not already installed (100k+ packages available).")
+    lines.append("- Use `sudo apt-get install <package>` for system packages that cannot")
+    lines.append("  be run with Nix. APT packages are ephemeral and lost on container stop.")
+    lines.append("- Use `mise use <tool>` to manage shared persistent tools (Node.js, Python,")
+    lines.append("  Go, etc.). Mise tools persist across restarts. Consult with the user")
+    lines.append("  before adding tools to mise, as it affects the shared tool configuration.")
+    lines.append("  Mise also supports Nix packages via the mise-nix plugin —")
+    lines.append("  use `mise use nix:<package>` for Nix packages that should persist.")
+
+    return "\n".join(lines)
 
 
 def _build_environment(

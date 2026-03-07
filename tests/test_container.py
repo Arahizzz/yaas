@@ -11,6 +11,7 @@ from yaas.config import Config, ResourceLimits, SecuritySettings, ToolConfig
 from yaas.constants import CLONE_WORKSPACE, HOME_VOLUME, NIX_VOLUME, RUNTIME_IMAGE
 from yaas.container import (
     _add_worktree_mounts,
+    _build_preamble,
     _parse_mount_spec,
     build_clone_spec,
     build_clone_work_spec,
@@ -1233,3 +1234,97 @@ class TestNoProjectMode:
         spec = build_container_spec(config, tmp_path, ["bash"])
         assert spec.environment["PROJECT_PATH"] == str(tmp_path)
         assert spec.environment["MISE_TRUSTED_CONFIG_PATHS"] == str(tmp_path)
+
+
+class TestBuildPreamble:
+    """Tests for _build_preamble function."""
+
+    def test_basic_preamble(self) -> None:
+        """Preamble includes sandbox identification."""
+        config = Config()
+        preamble = _build_preamble(config, Path("/projects/myapp"), [])
+        assert "YAAS" in preamble
+        assert "sandbox" in preamble.lower()
+
+    def test_resource_limits_shown(self) -> None:
+        """Preamble includes configured resource limits."""
+        config = Config()
+        config.resources = ResourceLimits(memory="8g", cpus=2.0, pids_limit=1000)
+        preamble = _build_preamble(config, Path("/projects/myapp"), [])
+        assert "8g" in preamble
+        assert "2.0" in preamble
+        assert "1000" in preamble
+
+    def test_unlimited_when_no_limits(self) -> None:
+        """Preamble shows 'unlimited' when no resource limits are set."""
+        config = Config()
+        preamble = _build_preamble(config, Path("/projects/myapp"), [])
+        assert preamble.count("unlimited") == 3  # memory, cpu, pids
+
+    def test_network_mode(self) -> None:
+        """Preamble includes network mode."""
+        config = Config(network_mode="none")
+        preamble = _build_preamble(config, Path("/projects/myapp"), [])
+        assert "none" in preamble
+
+    def test_project_path_readwrite(self) -> None:
+        """Preamble shows project path with read-write mode."""
+        config = Config()
+        preamble = _build_preamble(config, Path("/projects/myapp"), [])
+        assert "/projects/myapp" in preamble
+        assert "read-write" in preamble
+
+    def test_project_path_readonly(self) -> None:
+        """Preamble shows project path with read-only mode."""
+        config = Config(readonly_project=True)
+        preamble = _build_preamble(config, Path("/projects/myapp"), [])
+        assert "read-only" in preamble
+
+    def test_no_project(self) -> None:
+        """Preamble indicates when no project is mounted."""
+        config = Config()
+        preamble = _build_preamble(config, None, [])
+        assert "no project" in preamble.lower()
+
+    def test_bind_mounts_listed(self) -> None:
+        """Preamble lists bind mount targets with read-only labels."""
+        config = Config()
+        mounts = [
+            Mount("/home/user/.claude", "/home/.claude"),
+            Mount("/home/user/.ssh/known_hosts", "/etc/ssh/ssh_known_hosts", read_only=True),
+            Mount("yaas-home", "/home", type="volume"),
+        ]
+        preamble = _build_preamble(config, Path("/projects/myapp"), mounts)
+        assert "/home/.claude" in preamble
+        assert "/etc/ssh/ssh_known_hosts (read-only)" in preamble
+
+    def test_volume_mounts_listed(self) -> None:
+        """Preamble lists volume mount targets separately."""
+        config = Config()
+        mounts = [
+            Mount("yaas-home", "/home", type="volume"),
+            Mount("yaas-nix", "/nix", type="volume"),
+        ]
+        preamble = _build_preamble(config, Path("/projects/myapp"), mounts)
+        assert "- /home" in preamble
+        assert "- /nix" in preamble
+        assert "persistent" in preamble.lower()
+
+    def test_caution_note(self) -> None:
+        """Preamble includes caution about mounted user files."""
+        config = Config()
+        preamble = _build_preamble(config, Path("/projects/myapp"), [])
+        assert "caution" in preamble.lower()
+
+    def test_preamble_in_environment(self, mock_linux, project_dir, clean_env) -> None:
+        """YAAS_PREAMBLE env var is set in container spec."""
+        config = Config()
+        spec = build_container_spec(config, project_dir, ["bash"])
+        assert "YAAS_PREAMBLE" in spec.environment
+        assert "YAAS" in spec.environment["YAAS_PREAMBLE"]
+
+    def test_preamble_disabled(self, mock_linux, project_dir, clean_env) -> None:
+        """YAAS_PREAMBLE env var is not set when preamble is disabled."""
+        config = Config(preamble=False)
+        spec = build_container_spec(config, project_dir, ["bash"])
+        assert "YAAS_PREAMBLE" not in spec.environment

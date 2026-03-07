@@ -118,6 +118,7 @@ class Config(ContainerSettings):
 
     # Override ContainerSettings auto-update defaults to concrete values
     auto_pull_image: bool = True  # Pull image on every start
+    preamble: bool = True  # Set YAAS_PREAMBLE env var with sandbox info
     auto_upgrade_tools: bool = True  # Run mise upgrade on every start
 
     # Tool shortcuts (yaas claude, yaas aider, etc.)
