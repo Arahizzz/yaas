@@ -66,6 +66,7 @@ class ContainerSettings:
     auto_pull_image: bool | None = None
     auto_upgrade_tools: bool | None = None
     mounts: list[str] = field(default_factory=list)
+    ports: list[str] = field(default_factory=list)
     env: dict[str, str | bool] = field(default_factory=dict)
 
 
@@ -259,7 +260,7 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
         # Validate list fields before modifying the dict
         parsed_lists: dict[str, list[str]] = {}
         valid = True
-        for field_name in ("command", "yolo_flags", "mounts"):
+        for field_name in ("command", "yolo_flags", "mounts", "ports"):
             if field_name in tool_data:
                 val = tool_data[field_name]
                 if isinstance(val, list) and all(isinstance(v, str) for v in val):
@@ -303,6 +304,8 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
             existing.yolo_flags = parsed_lists["yolo_flags"]
         if "mounts" in parsed_lists:
             existing.mounts = parsed_lists["mounts"]
+        if "ports" in parsed_lists:
+            existing.ports = parsed_lists["ports"]
         if parsed_env is not None:
             existing.env = parsed_env
 

@@ -41,6 +41,9 @@
 # Global mounts (always applied)
 # mounts = ["~/data:/data:ro"]
 
+# Port publishing (host:container)
+# ports = ["8080:8080"]
+
 # Global environment variables (always applied)
 # true = forward from host, "value" = hardcoded
 # [env]

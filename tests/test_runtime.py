@@ -479,3 +479,44 @@ class TestSecurityFlags:
             if x == "--security-opt" and cmd[i + 1].startswith("seccomp=")
         ]
         assert len(seccomp_opts) == 0
+
+
+# ============================================================
+# Port publishing tests
+# ============================================================
+
+
+class TestPortPublishing:
+    """Tests for port publishing CLI flag generation."""
+
+    def test_podman_ports(self) -> None:
+        """Test Podman generates -p flags from ports list."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec(ports=["8080:8080", "3000:3000"])
+            cmd = runtime._build_command(spec)
+
+        port_indices = [i for i, x in enumerate(cmd) if x == "-p"]
+        port_values = [cmd[i + 1] for i in port_indices]
+        assert "8080:8080" in port_values
+        assert "3000:3000" in port_values
+
+    def test_docker_ports(self) -> None:
+        """Test Docker generates -p flags from ports list."""
+        with mock_docker_socket(accessible=True):
+            runtime = DockerRuntime()
+
+        spec = make_spec(ports=["8080:8080"])
+        cmd = runtime._build_command(spec)
+
+        assert "-p" in cmd
+        assert cmd[cmd.index("-p") + 1] == "8080:8080"
+
+    def test_no_port_flags_when_none(self) -> None:
+        """Test that no port flags are generated when ports is None."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec()
+            cmd = runtime._build_command(spec)
+
+        assert "-p" not in cmd

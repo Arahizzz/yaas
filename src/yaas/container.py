@@ -194,6 +194,13 @@ def build_container_spec(
 
     working_dir = str(project_dir) if project_dir else sandbox_home
 
+    # Collect ports (global + tool-specific)
+    ports = list(config.ports)
+    if config.active_tool:
+        tool = config.tools.get(config.active_tool)
+        if tool:
+            ports.extend(tool.ports)
+
     return ContainerSpec(
         image=RUNTIME_IMAGE,
         command=command,
@@ -517,8 +524,16 @@ def _build_preamble(
         "Environment:",
     ]
 
+    # Runtime
+    if config.runtime:
+        lines.append(f"- Runtime: {config.runtime}")
+
     # Network
     lines.append(f"- Network: {config.network_mode}")
+
+    # Ports
+    if config.ports:
+        lines.append(f"- Published ports: {', '.join(config.ports)}")
 
     # Resource limits
     mem = config.resources.memory or "unlimited"

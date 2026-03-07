@@ -77,6 +77,9 @@ class ContainerSpec:
     cpus: float | None = None  # e.g., 2.0
     pids_limit: int | None = None  # e.g., 1000
 
+    # Port publishing
+    ports: list[str] | None = None  # e.g., ["8080:8080", "3000:3000"]
+
     # Security
     capabilities: list[str] | None = None  # Exact cap set; triggers --cap-drop ALL + --cap-add each
     seccomp_profile: str | None = None  # path to seccomp JSON profile
@@ -356,6 +359,11 @@ class DockerRuntime:
         # Network
         if spec.network_mode:
             cmd.extend(["--network", spec.network_mode])
+
+        # Port publishing
+        if spec.ports:
+            for port in spec.ports:
+                cmd.extend(["-p", port])
 
         # PID namespace
         if spec.pid_mode:
