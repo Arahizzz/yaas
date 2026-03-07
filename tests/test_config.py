@@ -25,6 +25,7 @@ def test_default_config() -> None:
     assert config.git_config is False
     assert config.container_socket is False
     assert config.network_mode == "bridge"
+    assert config.mount_project is True
     assert config.readonly_project is False
     assert config.active_tool is None
     assert config.tools == {}
@@ -50,6 +51,7 @@ def test_container_settings_defaults() -> None:
     assert settings.container_socket is None
     assert settings.clipboard is None
     assert settings.network_mode is None
+    assert settings.mount_project is None
     assert settings.readonly_project is None
     assert settings.pid_mode is None
     assert settings.lxcfs is None
@@ -769,3 +771,41 @@ def test_resolve_lxcfs_override() -> None:
     )
     result = resolve_effective_config(config)
     assert result.lxcfs is True
+
+
+def test_resolve_mount_project_override() -> None:
+    """Test that tool mount_project override works via generic bool field merge."""
+    config = Config(
+        mount_project=True,
+        active_tool="claude",
+        tools={"claude": ToolConfig(mount_project=False)},
+    )
+    result = resolve_effective_config(config)
+    assert result.mount_project is False
+
+
+def test_mount_project_from_toml() -> None:
+    """Test that mount_project is parsed from TOML config."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+mount_project = false
+""")
+        config = load_config(project_dir)
+
+    assert config.mount_project is False
+
+
+def test_tool_mount_project_from_toml() -> None:
+    """Test that per-tool mount_project is parsed from TOML config."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        config_file = project_dir / ".yaas.toml"
+        config_file.write_text("""
+[tools.mytool]
+mount_project = false
+""")
+        config = load_config(project_dir)
+
+    assert config.tools["mytool"].mount_project is False

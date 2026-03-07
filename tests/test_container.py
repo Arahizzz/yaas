@@ -1169,3 +1169,67 @@ class TestLxcfsMounts:
 
         lxcfs_mounts = [m for m in spec.mounts if m.source.startswith("/var/lib/lxcfs/")]
         assert len(lxcfs_mounts) == 0
+
+
+# ============================================================
+# No-project mode tests
+# ============================================================
+
+
+class TestNoProjectMode:
+    """Tests for building container specs without a project directory."""
+
+    def test_no_project_working_dir(self, mock_linux, clean_env) -> None:
+        """When project_dir is None, working_dir is sandbox home."""
+        config = Config()
+        spec = build_container_spec(config, None, ["bash"])
+        assert spec.working_dir == "/home"
+
+    def test_no_project_skips_project_mount(self, mock_linux, clean_env, tmp_path: Path) -> None:
+        """When project_dir is None, no project directory is mounted."""
+        config = Config()
+        spec = build_container_spec(config, None, ["bash"])
+
+        bind_sources = [m.source for m in spec.mounts if m.type == "bind"]
+        # No project-like bind mounts (only optional config mounts)
+        for source in bind_sources:
+            assert not source.startswith(str(tmp_path))
+
+    def test_no_project_omits_project_path_env(self, mock_linux, clean_env) -> None:
+        """When project_dir is None, PROJECT_PATH is not set."""
+        config = Config()
+        spec = build_container_spec(config, None, ["bash"])
+        assert "PROJECT_PATH" not in spec.environment
+
+    def test_no_project_omits_mise_trusted_paths(self, mock_linux, clean_env) -> None:
+        """When project_dir is None, MISE_TRUSTED_CONFIG_PATHS is not set."""
+        config = Config()
+        spec = build_container_spec(config, None, ["bash"])
+        assert "MISE_TRUSTED_CONFIG_PATHS" not in spec.environment
+
+    def test_no_project_still_has_home_volume(self, mock_linux, clean_env) -> None:
+        """When project_dir is None, home volume is still mounted."""
+        config = Config()
+        spec = build_container_spec(config, None, ["bash"])
+        home_mount = next(
+            (m for m in spec.mounts if m.target == "/home" and m.type == "volume"), None
+        )
+        assert home_mount is not None
+
+    def test_no_project_user_mounts_applied(self, mock_linux, clean_env, tmp_path: Path) -> None:
+        """When project_dir is None, user-defined mounts are still applied."""
+        mount_src = tmp_path / "data"
+        mount_src.mkdir()
+        config = Config(mounts=[f"{mount_src}:/data"])
+        spec = build_container_spec(config, None, ["bash"])
+
+        data_mount = next((m for m in spec.mounts if m.target == "/data"), None)
+        assert data_mount is not None
+        assert data_mount.source == str(mount_src)
+
+    def test_with_project_has_project_path_env(self, mock_linux, clean_env, tmp_path: Path) -> None:
+        """When project_dir is set, PROJECT_PATH and MISE_TRUSTED_CONFIG_PATHS are set."""
+        config = Config()
+        spec = build_container_spec(config, tmp_path, ["bash"])
+        assert spec.environment["PROJECT_PATH"] == str(tmp_path)
+        assert spec.environment["MISE_TRUSTED_CONFIG_PATHS"] == str(tmp_path)
