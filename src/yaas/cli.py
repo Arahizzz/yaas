@@ -118,6 +118,9 @@ def run(
     network: NetworkMode | None = typer.Option(None, "--network", help="Network mode"),
     memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
     cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
+    mount: list[str] | None = typer.Option(None, "--mount", "-v", help="Ad-hoc mount (mount spec)"),
+    env: list[str] | None = typer.Option(None, "--env", "-e", help="Ad-hoc env (KEY=VALUE or KEY)"),
+    no_project: bool = typer.Option(False, "--no-project", help="Don't mount project directory"),
 ) -> None:
     """Run a command in the sandbox."""
     if not ctx.args:
@@ -126,6 +129,10 @@ def run(
     # Validate mutual exclusion
     if clone and worktree:
         raise typer.BadParameter("--clone and --worktree are mutually exclusive")
+    if no_project and worktree:
+        raise typer.BadParameter("--no-project and --worktree are mutually exclusive")
+    if no_project and clone:
+        raise typer.BadParameter("--no-project and --clone are mutually exclusive")
 
     project_dir, worktree_name = _resolve_worktree(worktree)
     config = load_config(project_dir)
@@ -145,6 +152,9 @@ def run(
         config.resources.memory = memory
     if cpus:
         config.resources.cpus = cpus
+    if no_project:
+        config.mount_project = False
+    _apply_cli_mounts_env(config, mount, env)
 
     _run_container(config, project_dir, ctx.args, worktree_name, clone_url=clone, clone_ref=ref)
 
@@ -183,11 +193,24 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
         no_yolo: bool = typer.Option(False, "--no-yolo", help="Disable auto-confirm mode"),
         memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
         cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
+        mount: list[str] | None = typer.Option(
+            None, "--mount", "-v", help="Ad-hoc mount (mount spec)"
+        ),
+        env: list[str] | None = typer.Option(
+            None, "--env", "-e", help="Ad-hoc env (KEY=VALUE or KEY)"
+        ),
+        no_project: bool = typer.Option(
+            False, "--no-project", help="Don't mount project directory"
+        ),
     ) -> None:
         """Run AI tool in sandbox with YOLO mode (auto-confirm)."""
         # Validate mutual exclusion
         if clone and worktree:
             raise typer.BadParameter("--clone and --worktree are mutually exclusive")
+        if no_project and worktree:
+            raise typer.BadParameter("--no-project and --worktree are mutually exclusive")
+        if no_project and clone:
+            raise typer.BadParameter("--no-project and --clone are mutually exclusive")
 
         project_dir, worktree_name = _resolve_worktree(worktree)
         config = load_config(project_dir)
@@ -211,6 +234,9 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
             config.resources.memory = memory
         if cpus:
             config.resources.cpus = cpus
+        if no_project:
+            config.mount_project = False
+        _apply_cli_mounts_env(config, mount, env)
 
         # Build command with YOLO flags (unless --no-yolo)
         tc = config.tools.get(tool)
@@ -477,6 +503,23 @@ def _run_clone_workflow(
     raise typer.Exit(exit_code)
 
 
+def _apply_cli_mounts_env(
+    config: Config,
+    mounts: list[str] | None,
+    envs: list[str] | None,
+) -> None:
+    """Merge ad-hoc CLI --mount and --env values into config."""
+    if mounts:
+        config.mounts.extend(mounts)
+    if envs:
+        for entry in envs:
+            if "=" in entry:
+                key, value = entry.split("=", 1)
+                config.env[key] = value
+            else:
+                config.env[entry] = True
+
+
 def _run_container(
     config: Config,
     project_dir: Path,
@@ -507,7 +550,8 @@ def _run_container(
         _upgrade_tools(config, project_dir, runtime)
 
     # Build container spec - TTY only if stdin is a terminal, but always allow stdin
-    spec = build_container_spec(config, project_dir, command, tty=stdin_is_tty())
+    effective_project_dir = project_dir if config.mount_project else None
+    spec = build_container_spec(config, effective_project_dir, command, tty=stdin_is_tty())
 
     # Check for concurrent usage warning
     if worktree_name and check_worktree_in_use(project_dir, runtime.command_prefix):
