@@ -100,6 +100,17 @@ yaas opencode
 yaas claude --no-yolo
 ```
 
+### Sandbox Awareness
+
+AI agents running inside containers see a partial slice of the system — some paths may be missing, tools may not be pre-installed, and things may not work as expected compared to a full host environment. They may also pick up misleading information from mounted config files that reference host-specific paths or tools. Without context, agents can get confused and waste time debugging container artifacts. YAAS sets a `YAAS_PREAMBLE` environment variable that tells the agent it's in a sandbox and provides details about the environment — resource limits, network mode, mounted paths, and how to install tools. Agents that support system prompt injection receive this automatically:
+
+- **Claude Code** uses `--append-system-prompt $YAAS_PREAMBLE` (configured by default)
+- **Codex** uses `-c developer_instructions=$YAAS_PREAMBLE` (in default config template)
+
+For agents without a system prompt injection flag (Gemini, Aider, OpenCode), add a note to your project's `AGENTS.md` instructing the agent to read the `$YAAS_PREAMBLE` environment variable.
+
+To disable preamble injection, set `preamble = false` in your config and remove `--append-system-prompt $YAAS_PREAMBLE` (or equivalent) from your tool commands.
+
 ### Argument Pass-Through
 
 YAAS options must come first. Any unrecognized options are passed through to the underlying tool.
@@ -282,12 +293,13 @@ Each tool can declare its own `mounts` and `env`. These are **only applied when 
 
 ```toml
 [tools.claude]
-command = ["claude"]                        # Executable (default: tool name)
+command = ["claude", "--append-system-prompt", "$YAAS_PREAMBLE"]
 yolo_flags = ["--dangerously-skip-permissions"]  # Appended in YOLO mode
 mounts = [".claude", ".claude.json", ".claude/ide:ro"]
 env = { ANTHROPIC_API_KEY = true }
 
 [tools.codex]
+command = ["codex", "-c", "developer_instructions=$YAAS_PREAMBLE"]
 yolo_flags = ["--dangerously-bypass-approvals-and-sandbox"]
 mounts = [".codex"]
 env = { OPENAI_API_KEY = true }
@@ -301,6 +313,8 @@ env = { OPENAI_API_KEY = true }
 **Env format:**
 - `KEY = true` → forward `KEY` from the host environment (skipped if unset)
 - `KEY = "value"` → set `KEY` to a hardcoded value
+
+**Variable expansion:** The entrypoint expands all `$ENV_VAR` references in command arguments via `envsubst`, so any environment variable can be referenced in tool commands (e.g. `$YAAS_PREAMBLE`).
 
 ## Mise Integration
 
