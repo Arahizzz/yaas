@@ -80,6 +80,17 @@ class TestPodmanRuntime:
         assert "echo" in cmd
         assert "hello" in cmd
 
+    def test_injects_yaas_runtime_env(self) -> None:
+        """Test PodmanRuntime injects YAAS_RUNTIME=podman."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec()
+            cmd = runtime._build_command(spec)
+
+        assert "YAAS_RUNTIME=podman" in cmd
+        idx = cmd.index("YAAS_RUNTIME=podman")
+        assert cmd[idx - 1] == "-e"
+
     def test_command_prefix(self) -> None:
         """Test PodmanRuntime command_prefix returns podman."""
         with patch("yaas.runtime.is_linux", return_value=True):
@@ -169,15 +180,42 @@ class TestPodmanKrunRuntime:
         img_idx = cmd.index("test:latest")
         assert ann_idx < img_idx
 
-    def test_inherits_podman_flags(self) -> None:
-        """Test that krun runtime preserves all Podman-specific flags."""
+    def test_omits_userns_and_user_flags(self) -> None:
+        """Test that krun omits --userns and --user (VM boots as root)."""
         with patch("yaas.runtime.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
             spec = make_spec()
             cmd = runtime._build_command(spec)
 
-        assert "--userns=keep-id" in cmd
+        assert "--userns=keep-id" not in cmd
+        assert "--user" not in cmd
         assert "podman" == cmd[0]
+
+    def test_passes_runtime_and_fake_uid_env_vars(self) -> None:
+        """Test that krun injects YAAS_RUNTIME and YAAS_FAKE_UID/GID for LD_PRELOAD spoofing."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+            spec = make_spec(user="1000:1000")
+            cmd = runtime._build_command(spec)
+
+        assert "YAAS_RUNTIME=podman-krun" in cmd
+        assert "YAAS_FAKE_UID=1000" in cmd
+        assert "YAAS_FAKE_GID=1000" in cmd
+        uid_idx = cmd.index("YAAS_FAKE_UID=1000")
+        gid_idx = cmd.index("YAAS_FAKE_GID=1000")
+        assert cmd[uid_idx - 1] == "-e"
+        assert cmd[gid_idx - 1] == "-e"
+
+    def test_forces_nix_substituters(self) -> None:
+        """Test that krun injects NIX_CONFIG to force substituters online."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+            spec = make_spec()
+            cmd = runtime._build_command(spec)
+
+        assert "NIX_CONFIG=substitute = true" in cmd
+        nix_idx = cmd.index("NIX_CONFIG=substitute = true")
+        assert cmd[nix_idx - 1] == "-e"
 
     def test_available_with_krun(self) -> None:
         """Test is_available when both podman and krun are present."""
@@ -262,6 +300,7 @@ class TestPodmanKrunRuntime:
         assert config.security.capabilities is None
 
 
+
 # ============================================================
 # DockerRuntime tests
 # ============================================================
@@ -326,6 +365,18 @@ class TestDockerRuntime:
             stack.enter_context(mock_which({"docker": "/usr/bin/docker", "sudo": None}))
             runtime = DockerRuntime()
             assert runtime.is_available() is False
+
+    def test_injects_yaas_runtime_env(self) -> None:
+        """Test DockerRuntime injects YAAS_RUNTIME=docker."""
+        with mock_docker_socket(accessible=True):
+            runtime = DockerRuntime()
+
+        spec = make_spec()
+        cmd = runtime._build_command(spec)
+
+        assert "YAAS_RUNTIME=docker" in cmd
+        idx = cmd.index("YAAS_RUNTIME=docker")
+        assert cmd[idx - 1] == "-e"
 
     def test_build_command_with_sudo(self) -> None:
         """Test DockerRuntime command building when using sudo."""

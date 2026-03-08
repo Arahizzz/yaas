@@ -6,6 +6,8 @@
 
 # Container runtime (auto-detected if omitted)
 # runtime = "podman"  # or "podman-krun" (libkrun MicroVM) or "docker"
+# Note: podman-krun runs containers inside lightweight KVM VMs via libkrun.
+# Some features are automatically disabled (see README for details).
 
 # Features (what to mount/forward into the sandbox)
 # ssh_agent = false

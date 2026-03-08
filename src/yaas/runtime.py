@@ -165,13 +165,24 @@ class PodmanRuntime:
     def adjust_config(self, config: Config) -> None:
         pass
 
-    def _build_command(self, spec: ContainerSpec) -> list[str]:
-        cmd = [*self.command_prefix, "run", "--rm"]
-
+    def _add_userns_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
+        """Add user namespace flags. Override in subclasses for different behavior."""
         # Use keep-id to preserve UID mapping in rootless podman.
         # This makes host UID 1000 = container UID 1000, so files are
         # readable and YOLO flags work (Claude blocks them for root).
         cmd.append("--userns=keep-id")
+
+    def _add_user_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
+        """Add user identity flags. Override in subclasses for different behavior."""
+        cmd.extend(["--user", spec.user])
+        # Preserve host supplementary groups (needed for docker socket access with userns)
+        if spec.groups:
+            cmd.extend(["--group-add", "keep-groups"])
+
+    def _build_command(self, spec: ContainerSpec) -> list[str]:
+        cmd = [*self.command_prefix, "run", "--rm"]
+
+        self._add_userns_flags(cmd, spec)
 
         # Disable SELinux label confinement (needed for bind mounts: project dir, configs, sockets)
         cmd.extend(["--security-opt", "label=disable"])
@@ -182,12 +193,7 @@ class PodmanRuntime:
         if spec.stdin_open:
             cmd.append("-i")
 
-        # User
-        cmd.extend(["--user", spec.user])
-
-        # Preserve host supplementary groups (needed for docker socket access with userns)
-        if spec.groups:
-            cmd.extend(["--group-add", "keep-groups"])
+        self._add_user_flags(cmd, spec)
 
         # Working directory
         cmd.extend(["--workdir", spec.working_dir])
@@ -204,6 +210,9 @@ class PodmanRuntime:
         # PID namespace
         if spec.pid_mode:
             cmd.extend(["--pid", spec.pid_mode])
+
+        # Runtime identifier
+        cmd.extend(["-e", f"YAAS_RUNTIME={self.name}"])
 
         # Environment
         for key, value in spec.environment.items():
@@ -257,10 +266,10 @@ class PodmanKrunRuntime(PodmanRuntime):
 
     # Features incompatible with libkrun MicroVMs (host sockets, FUSE mounts, etc.)
     _INCOMPATIBLE_FEATURES: dict[str, str] = {
-        "lxcfs": "lxcfs (host FUSE mounts)",
-        "container_socket": "container socket passthrough (host Unix socket)",
-        "clipboard": "clipboard / display socket passthrough (host Unix socket)",
-        "ssh_agent": "SSH agent forwarding (host Unix socket)",
+        "lxcfs": "lxcfs (not needed, VM has its own /proc)",
+        "container_socket": "container socket passthrough (virtiofs can't forward Unix sockets)",
+        "clipboard": "clipboard passthrough (virtiofs can't forward Unix sockets)",
+        "ssh_agent": "SSH agent forwarding (virtiofs can't forward Unix sockets)",
     }
 
     def adjust_config(self, config: Config) -> None:
@@ -275,11 +284,31 @@ class PodmanKrunRuntime(PodmanRuntime):
             logger.warning("capability restrictions are not supported with libkrun — disabling")
             config.security.capabilities = None
 
+    def _add_userns_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
+        """No userns for krun — VM boots as root, rootless podman maps UID 0 → host UID."""
+        pass
+
+    def _add_user_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
+        """No --user for krun — VM ignores it. LD_PRELOAD spoofs UID instead."""
+        pass
+
     def _build_command(self, spec: ContainerSpec) -> list[str]:
         cmd = super()._build_command(spec)
-        # Insert annotation before the image name (second-to-last group)
         image_idx = cmd.index(spec.image)
-        cmd.insert(image_idx, "--annotation=run.oci.handler=krun")
+        krun_flags: list[str] = [
+            # krun's getifaddrs() returns no interfaces, making Nix think it's
+            # offline and disabling parallel substitutions. Force substituters on.
+            "-e", "NIX_CONFIG=substitute = true",
+            "--annotation=run.oci.handler=krun",
+        ]
+        # Pass fake UID/GID for LD_PRELOAD spoofing in the entrypoint
+        if spec.user:
+            uid, gid = spec.user.split(":")
+            krun_flags[0:0] = [
+                "-e", f"YAAS_FAKE_UID={uid}",
+                "-e", f"YAAS_FAKE_GID={gid}",
+            ]
+        cmd[image_idx:image_idx] = krun_flags
         return cmd
 
 
@@ -368,6 +397,9 @@ class DockerRuntime:
         # PID namespace
         if spec.pid_mode:
             cmd.extend(["--pid", spec.pid_mode])
+
+        # Runtime identifier
+        cmd.extend(["-e", f"YAAS_RUNTIME={self.name}"])
 
         # Environment
         for key, value in spec.environment.items():
