@@ -448,6 +448,34 @@ YAAS uses named volumes to persist data across container sessions:
 
 This is why tools installed via mise don't need to be reinstalled every time you start a new container. Running `yaas cleanup volumes` deletes these volumes, which will trigger a fresh tool installation on the next run.
 
+### Runtime Options
+
+YAAS supports multiple container runtimes:
+
+| Runtime | Isolation | Notes |
+|---------|-----------|-------|
+| `podman` | Rootless container (default) | Best compatibility, user namespace support |
+| `podman-krun` | libkrun MicroVM (KVM) | **Experimental.** Hardware-level isolation via lightweight VMs |
+| `docker` | Docker container | Fallback, uses sudo if needed |
+
+Set the runtime globally (`runtime = "podman-krun"`) or per-tool in config.
+
+#### podman-krun (MicroVM) — Experimental
+
+Uses [libkrun](https://github.com/containers/libkrun) to run containers inside lightweight KVM virtual machines. Requires the `crun-krun` package (provides the `krun` binary). This runtime is experimental — it works for daily use but has rough edges (see known limitations below).
+
+**What works differently from regular Podman:**
+- `sudo` and `apt install` work natively — no workarounds needed
+- File ownership on the host is correct (same as regular Podman)
+- YOLO mode works as expected
+- `--network host` is not supported — YAAS automatically falls back to bridge. Use port publishing (`-p`) to expose services
+- Clipboard, SSH agent, and container socket passthrough are automatically disabled (virtiofs can't forward host Unix sockets into the VM)
+- lxcfs is automatically disabled (not needed — the VM has its own `/proc`)
+
+**Known limitations:**
+- **vsock errors on Linux 6.12+.** libkrun may print `BufDescTooSmall` errors during network-heavy operations. Cosmetic for most workloads but may cause hangs for large transfers. [Upstream fix in progress.](https://github.com/containers/libkrun/issues/535)
+- Nix may show a cosmetic "no Internet access" warning on startup. Network connectivity works fine — YAAS configures Nix to ignore this check.
+
 ## Clipboard and Image Pasting
 
 The `--clipboard` flag enables clipboard access for pasting images into AI agents. This works by mounting display server sockets into the container.
