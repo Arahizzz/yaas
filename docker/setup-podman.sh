@@ -12,24 +12,47 @@
 CONTAINERS_CONF_DIR="/etc/containers"
 sudo mkdir -p "$CONTAINERS_CONF_DIR"
 
-# Always overwrite configs to ensure correct settings.
-sudo tee "$CONTAINERS_CONF_DIR/containers.conf" >/dev/null <<'CONF'
+if [[ "${YAAS_RUNTIME}" == "podman-krun" ]]; then
+    # krun VM has a real kernel (KVM) — use proper namespace isolation.
+    sudo tee "$CONTAINERS_CONF_DIR/containers.conf" >/dev/null <<'CONF'
 [containers]
-# Host networking: netavark can't create network namespaces inside the
-# outer rootless podman user namespace (setns blocked).
 netns = "host"
-# Replace default mqueue mount with tmpfs — krun VMs lack mqueue kernel support.
+userns = "host"
+ipcns = "private"
+utsns = "private"
+cgroupns = "private"
+cgroups = "enabled"
+log_driver = "k8s-file"
+# krun kernel lacks POSIX mqueue support.
 mounts = ["type=tmpfs,destination=/dev/mqueue"]
-# Disable cgroups — controllers aren't delegated into the container.
-# Resource limits are already enforced by the outer container runtime.
-cgroups = "disabled"
 
 [engine]
 cgroup_manager = "cgroupfs"
 events_logger = "file"
+runtime = "crun"
 CONF
+else
+    # Regular podman/docker — all host namespaces (can't create inside userns).
+    # Based on: https://github.com/containers/image_build/blob/main/podman/containers.conf
+    sudo tee "$CONTAINERS_CONF_DIR/containers.conf" >/dev/null <<'CONF'
+[containers]
+netns = "host"
+userns = "host"
+ipcns = "host"
+utsns = "host"
+cgroupns = "host"
+cgroups = "disabled"
+log_driver = "k8s-file"
+# krun kernel lacks POSIX mqueue support.
+mounts = ["type=tmpfs,destination=/dev/mqueue"]
 
-# Resolve fuse-overlayfs path (may be in nix profile, not in default PATH)
+[engine]
+cgroup_manager = "cgroupfs"
+events_logger = "file"
+runtime = "crun"
+CONF
+fi
+
 FUSE_OVERLAYFS="$(command -v fuse-overlayfs 2>/dev/null || echo "fuse-overlayfs")"
 sudo tee "$CONTAINERS_CONF_DIR/storage.conf" >/dev/null <<CONF
 [storage]
@@ -47,16 +70,6 @@ CONF
 if ! grep -qs 'user_allow_other' /etc/fuse.conf 2>/dev/null; then
     echo "user_allow_other" | sudo tee /etc/fuse.conf >/dev/null
 fi
-
-sudo tee "$CONTAINERS_CONF_DIR/policy.json" >/dev/null <<'JSON'
-{
-    "default": [{"type": "insecureAcceptAnything"}]
-}
-JSON
-
-sudo tee "$CONTAINERS_CONF_DIR/registries.conf" >/dev/null <<'CONF'
-unqualified-search-registries = ["docker.io", "quay.io"]
-CONF
 
 # ============================================================
 # Podman wrapper — sudo for rootful Docker privilege drop
