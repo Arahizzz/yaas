@@ -2,6 +2,8 @@
 
 Run AI coding agents in sandboxed containers with proper UID passthrough.
 
+> **Note:** This is an experimental personal project in which I explore how to sandbox AI agents' capabilities in an ergonomic way. I am testing various features and designs while evaluating them on my real-life use cases. As such, I am currently not committing to API stability of any kind and you should expect adding/removal/reworking of features with future updates.
+
 ## Why YAAS?
 
 Container sandboxing for AI agents is nothing new, but most solutions have friction that makes them impractical for daily use.
