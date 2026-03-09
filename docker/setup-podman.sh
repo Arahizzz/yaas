@@ -1,20 +1,10 @@
 #!/bin/bash
-# Podman DinD setup — auto-install and configure podman inside the container.
+# Podman DinD setup — configure podman inside the container.
 # Sourced by entrypoint.sh when YAAS_PODMAN=1.
 #
-# Nested podman runs ROOTFUL: Go programs bypass LD_PRELOAD (direct syscalls),
-# so podman sees real UID 0 and uses /etc/containers/ and /var/lib/containers/.
-# fuse-overlayfs is needed because kernel overlay doesn't work inside a user
-# namespace (the outer rootless podman always creates one).
-
-# ============================================================
-# Auto-install podman + fuse-overlayfs if not present
-# ============================================================
-if ! command -v podman &>/dev/null; then
-    echo "Installing podman via nix (first run)..."
-    mise use -g "nix:podman" "nix:fuse-overlayfs" 2>/dev/null || true
-    eval "$(mise activate bash)"
-fi
+# Nested podman runs ROOTFUL: the container process is UID 0 (real root in
+# rootless podman's user namespace). fuse-overlayfs is needed because kernel
+# overlay doesn't work inside a user namespace.
 
 # ============================================================
 # Generate podman config
@@ -22,8 +12,7 @@ fi
 CONTAINERS_CONF_DIR="/etc/containers"
 sudo mkdir -p "$CONTAINERS_CONF_DIR"
 
-# Always overwrite configs — nix podman package may ship defaults that
-# don't include fuse-overlayfs or cgroupfs settings we need.
+# Always overwrite configs to ensure correct settings.
 sudo tee "$CONTAINERS_CONF_DIR/containers.conf" >/dev/null <<'CONF'
 [containers]
 # Host networking: netavark can't create network namespaces inside the
@@ -69,29 +58,20 @@ sudo tee "$CONTAINERS_CONF_DIR/registries.conf" >/dev/null <<'CONF'
 unqualified-search-registries = ["docker.io", "quay.io"]
 CONF
 
-# Force podman to use our configs — nix podman has its own store paths baked in
-# at compile time and ignores /etc/containers/. These env vars override that.
-export CONTAINERS_STORAGE_CONF="$CONTAINERS_CONF_DIR/storage.conf"
-export CONTAINERS_CONF="$CONTAINERS_CONF_DIR/containers.conf"
-export CONTAINERS_REGISTRIES_CONF="$CONTAINERS_CONF_DIR/registries.conf"
-
 # ============================================================
-# Podman wrapper — strip LD_PRELOAD + sudo
+# Podman wrapper — sudo for rootful Docker privilege drop
 # ============================================================
-# 1. LD_PRELOAD: conmon/crun (C programs) see fake UID from libfakeuid.so
-#    and incorrectly try rootless user namespace setup.
-# 2. sudo: needed for rootful Docker (gosu drops to non-root).
-#    For podman runtime (already UID 0), sudo is a no-op.
+# sudo: needed for rootful Docker (setpriv drops to non-root).
+# For podman runtime (already UID 0), sudo is a no-op.
 REAL_PODMAN="$(command -v podman)"
 WRAPPER_DIR="$HOME/.local/bin"
 mkdir -p "$WRAPPER_DIR"
 cat > "$WRAPPER_DIR/podman" <<WRAPPER
 #!/bin/bash
-unset LD_PRELOAD
 exec sudo "$REAL_PODMAN" "\$@"
 WRAPPER
 chmod +x "$WRAPPER_DIR/podman"
-# Ensure wrapper shadows nix podman (mise activate may have reordered PATH)
+# Ensure wrapper shadows system podman
 export PATH="$WRAPPER_DIR:$PATH"
 
 # Reset storage if it was previously initialized with a different driver

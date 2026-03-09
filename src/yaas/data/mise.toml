@@ -37,9 +37,6 @@ delta = "latest"
 # "npm:@openai/codex" = "latest"
 # "npm:@google/gemini-cli" = "latest"
 
-# Podman for nested containers (auto-installed by setup-podman.sh when podman = true)
-# "nix:podman" = "latest"
-
 # Docker CLI for Docker-outside-Docker (host socket mount)
 # docker-cli = "latest"
 

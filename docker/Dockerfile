@@ -1,45 +1,33 @@
-FROM debian:bookworm-slim
+FROM fedora:42
 
-ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 # ============================================================
 # 1. System packages (only things not available via mise)
 # ============================================================
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core build tools
-    build-essential make cmake pkg-config \
-    autoconf automake libtool \
-    coreutils bc \
-    # Essential development libraries
-    libssl-dev zlib1g-dev libxml2-dev libffi-dev \
-    # VCS and security
-    git git-lfs openssh-client gnupg ca-certificates \
+RUN dnf group install -y development-tools && dnf install -y \
+    # Extra build tools not in the group
+    cmake bc \
+    # Development libraries (not in the group)
+    openssl-devel zlib-devel libxml2-devel libffi-devel libatomic \
+    # VCS extras (git is in the group)
+    git-lfs openssh-clients gnupg2 \
     # Utilities
-    curl wget unzip zip xz-utils zstd gettext-base \
-    sudo less vim nano \
-    # Locale support (often needed)
-    locales icu-devtools \
+    curl wget unzip zip xz zstd \
+    sudo less vim-minimal nano \
     # Clipboard tools
     wl-clipboard xclip \
-    # Rootless container support (Podman DinD) + privilege drop (Docker)
-    uidmap gosu \
-    && rm -rf /var/lib/apt/lists/* \
+    # Podman DinD (baked in, no nix runtime install)
+    podman fuse-overlayfs \
+    && dnf clean all \
     && git lfs install
 
 # ============================================================
-# 2. User identity support: sudo + PAM + libfakeuid.so
-#    sudo/PAM for privileged setup in entrypoint
-#    libfakeuid for LD_PRELOAD UID spoofing (rootless podman, rootless docker, krun)
+# 2. sudo + PAM for privileged setup in entrypoint
 # ============================================================
 RUN echo "ALL ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd \
-    && chmod 440 /etc/sudoers.d/nopasswd \
-    && echo -e "auth sufficient pam_permit.so\naccount sufficient pam_permit.so\nsession sufficient pam_permit.so" > /etc/pam.d/sudo
-
-COPY fakeuid.c /tmp/fakeuid.c
-RUN gcc -shared -fPIC -o /usr/local/lib/libfakeuid.so /tmp/fakeuid.c \
-    && rm /tmp/fakeuid.c
+    && chmod 440 /etc/sudoers.d/nopasswd
 
 # ============================================================
 # 3. Tool managers: mise + nix (slow installs, cached aggressively)
