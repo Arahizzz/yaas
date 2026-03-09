@@ -3,5 +3,6 @@
 # Sourced by entrypoint.sh.
 #
 # Rootless podman always creates a user namespace: container UID 0 maps to the
-# host user's UID. File ownership on bind mounts is correct.
-# UID spoofing (LD_PRELOAD) is controlled per-tool via YAAS_SPOOF_UID.
+# host user's UID. Process stays UID 0 throughout.
+SHELL_UID=0
+SHELL_GID=0
