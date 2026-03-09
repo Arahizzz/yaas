@@ -425,21 +425,37 @@ yaas cleanup volumes
 
 ### UID Passthrough (Linux)
 
-Traditional container sandboxes run processes as root or a fixed UID, which causes file permission problems when the container writes to mounted directories. On **Linux**, YAAS runs the container process with your actual UID/GID and creates a matching user inside the container at startup:
+Traditional container sandboxes run processes as root or a mismatched UID, which causes file permission problems when the container writes to mounted directories. YAAS handles this differently depending on the runtime:
+
+**Podman (rootless) / podman-krun:** The container process runs as "root" (UID 0) inside a user namespace, but this is **not real root** — the kernel maps container UID 0 to your host UID (e.g. 1000). The process has no access to the host's real root account and cannot escalate beyond your user's privileges. Files created in the container appear owned by your host user — no chown needed.
 
 ```
-Host (Linux)                      Container
+Host (UID 1000)                   Container (user namespace)
 ──────────────────────────────────────────────────────────────
---user 1000:1000 ─────────────────> Process runs as UID 1000
-                                    Entrypoint creates user "yaas" (1000:1000)
-
+Host UID 1000 ════════════════════> Container UID 0 (root)
 ~/projects/myapp ─────────────────> ~/projects/myapp (rw)
-                                    ↳ Files created with UID 1000 ✓
+                                    ↳ Created as UID 0 inside
+                                    ↳ Appears as UID 1000 on host ✓
 ```
 
-This means files created inside the container have correct ownership on the host. Config files like `.gitconfig` and `.claude` can be mounted directly instead of copied. Container sockets also work properly for docker-in-docker scenarios. Since the container's `/etc/passwd` is not bind-mounted from the host, you can freely `apt install` packages that need to create system users.
+**Docker (rootful):** The container starts as real root for setup, then `setpriv` drops to your host UID/GID at exec time. Volumes are chowned to your UID on first run.
 
-**Note:** On macOS, Docker Desktop handles file ownership through its file sharing layer (VirtioFS), so files created in containers should be owned by your macOS user without explicit UID passthrough.
+```
+Host (UID 1000)                   Container (no user namespace)
+──────────────────────────────────────────────────────────────
+YAAS_HOST_UID=1000 ───────────────> Entrypoint: chown volumes to 1000
+                                    setpriv drops to UID 1000 at exec
+~/projects/myapp ─────────────────> ~/projects/myapp (rw)
+                                    ↳ Created as UID 1000 ✓
+```
+
+**Docker (rootless):** Same as Podman — user namespace maps UID 0 to host UID. No privilege drop needed.
+
+**Docker (macOS):** Docker Desktop runs containers inside a Linux VM. File ownership is handled transparently by the file sharing layer (VirtioFS/gRPC-FUSE) — files created in containers appear owned by your macOS user regardless of the container UID. No UID passthrough or user namespace setup is needed.
+
+In all cases, config files like `.gitconfig` and `.claude` can be mounted directly instead of copied, and files created inside the container have correct ownership on the host. Since the container's `/etc/passwd` is not bind-mounted from the host, you can freely `dnf install` packages that need to create system users.
+
+For AI tools like Claude Code that check whether they're running as root, YAAS sets `IS_SANDBOX=1` in the tool's environment, which signals that root execution inside a sandbox is intentional.
 
 ### Persistent Volumes
 
