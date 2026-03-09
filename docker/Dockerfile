@@ -23,13 +23,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     locales icu-devtools \
     # Clipboard tools
     wl-clipboard xclip \
+    # Rootless container support (Podman DinD) + privilege drop (Docker)
+    uidmap gosu \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 
 # ============================================================
 # 2. User identity support: sudo + PAM + libfakeuid.so
-#    sudo/PAM for podman/docker (dynamic user via --userns=keep-id)
-#    libfakeuid for krun (LD_PRELOAD UID spoofing in MicroVM)
+#    sudo/PAM for privileged setup in entrypoint
+#    libfakeuid for LD_PRELOAD UID spoofing (rootless podman, rootless docker, krun)
 # ============================================================
 RUN echo "ALL ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd \
     && chmod 440 /etc/sudoers.d/nopasswd \
@@ -55,7 +57,7 @@ ENV HOME=/home
 ENV MISE_DATA_DIR=/home/.local/share/mise
 ENV MISE_CACHE_DIR=/home/.cache/mise
 
-# Writable dirs for host UID (--userns=keep-id) + XDG runtime dir
+# Writable dirs for dynamic UID passthrough + XDG runtime dir
 RUN mkdir -p "$HOME/.local/bin" "$HOME/.local/share/mise" "$HOME/.cache" "$HOME/.config/mise" \
     && chmod -R 777 /home \
     && mkdir -p /run/user && chmod 1777 /run/user
@@ -63,7 +65,7 @@ RUN mkdir -p "$HOME/.local/bin" "$HOME/.local/share/mise" "$HOME/.cache" "$HOME/
 # ============================================================
 # 5. Entrypoint scripts (change most often — last for cache)
 # ============================================================
-COPY --chmod=755 entrypoint.sh entrypoint-container.sh entrypoint-krun.sh /
+COPY --chmod=755 entrypoint.sh entrypoint-podman.sh entrypoint-docker.sh entrypoint-krun.sh setup-podman.sh /
 
 WORKDIR /workspace
 ENTRYPOINT ["/entrypoint.sh"]

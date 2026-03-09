@@ -1,20 +1,16 @@
 /*
- * libfakeuid — LD_PRELOAD library for krun MicroVM containers.
+ * libfakeuid — LD_PRELOAD library for UID spoofing in YAAS containers.
  *
- * Problem: krun VMs boot as root (UID 0). Rootless podman maps container
- * UID 0 → host UID 1000, so file ownership is correct. But AI agents like
- * Claude Code detect root via getuid() and refuse to enable YOLO mode.
+ * Applied only to AI CLI processes (via per-tool spoof_uid config flag).
+ * Overrides getuid/geteuid/getgid/getegid (and getres* variants)
+ * to return the UID/GID from YAAS_HOST_UID/YAAS_HOST_GID env vars
+ * (default 1000). The real kernel UID stays 0, so all privileged
+ * operations work.
  *
- * Solution: override getuid/geteuid/getgid/getegid (and getres* variants)
- * to return the UID/GID from YAAS_FAKE_UID/YAAS_FAKE_GID env vars (default
- * 1000). The real kernel UID stays 0, so all privileged operations work.
- *
- * Sudo compatibility: since the real UID is already 0, there's no privilege
- * transition when exec'ing setuid binaries — so the dynamic linker does NOT
- * strip LD_PRELOAD. We detect setuid binaries (e.g. sudo) by checking the
- * setuid bit on /proc/self/exe and disable faking, letting sudo see real
- * UID 0. Sudo's env_reset then strips LD_PRELOAD from children (apt, dpkg),
- * so they also see real UID 0 and work normally.
+ * LD_PRELOAD is inherited by the entire process tree (AI CLI + children).
+ * Setuid binaries (e.g. sudo) are excluded: the kernel strips LD_PRELOAD
+ * when real UID == 0 and the binary has the setuid bit, but we also
+ * detect this case and disable faking to be safe.
  */
 
 #define _GNU_SOURCE
@@ -37,8 +33,8 @@ static void init(void) {
         return;
     }
 
-    const char *uid_str = getenv("YAAS_FAKE_UID");
-    const char *gid_str = getenv("YAAS_FAKE_GID");
+    const char *uid_str = getenv("YAAS_HOST_UID");
+    const char *gid_str = getenv("YAAS_HOST_GID");
     if (uid_str) fake_uid = (uid_t)atoi(uid_str);
     if (gid_str) fake_gid = (gid_t)atoi(gid_str);
 }
