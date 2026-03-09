@@ -53,7 +53,8 @@ class ContainerSettings:
 
     ssh_agent: bool | None = None
     git_config: bool | None = None
-    container_socket: bool | None = None
+    podman: bool | None = None
+    podman_docker_socket: bool | None = None
     clipboard: bool | None = None
     network_mode: str | None = None
     mount_project: bool | None = None
@@ -64,9 +65,11 @@ class ContainerSettings:
     resources: ResourceLimits | None = None
     security: SecuritySettings | None = None
     auto_pull_image: bool | None = None
+    spoof_uid: bool | None = None
     auto_upgrade_tools: bool | None = None
     mounts: list[str] = field(default_factory=list)
     ports: list[str] = field(default_factory=list)
+    devices: list[str] = field(default_factory=list)
     env: dict[str, str | bool] = field(default_factory=dict)
 
 
@@ -93,7 +96,8 @@ class Config(ContainerSettings):
     # Type narrowing (bool | None → bool) is valid: Config always has concrete values.
     ssh_agent: bool = False
     git_config: bool = False
-    container_socket: bool = False
+    podman: bool = False
+    podman_docker_socket: bool = False
     clipboard: bool = False
     network_mode: str = "bridge"
     mount_project: bool = True
@@ -116,6 +120,7 @@ class Config(ContainerSettings):
     )
 
     # Override ContainerSettings auto-update defaults to concrete values
+    spoof_uid: bool = False  # Spoof UID via LD_PRELOAD (per-tool override)
     auto_pull_image: bool = True  # Pull image on every start
     preamble: bool = True  # Set YAAS_PREAMBLE env var with sandbox info
     auto_upgrade_tools: bool = True  # Run mise upgrade on every start
@@ -129,7 +134,7 @@ class Config(ContainerSettings):
 
 # Precompute ContainerSettings field names for generic merge/resolve
 _CONTAINER_FIELDS = frozenset(f.name for f in dc_fields(ContainerSettings))
-_SPECIAL_FIELDS = frozenset({"mounts", "ports", "env", "resources", "security"})
+_SPECIAL_FIELDS = frozenset({"mounts", "ports", "devices", "env", "resources", "security"})
 
 
 def _ensure_global_config() -> None:
@@ -231,6 +236,15 @@ def _merge_toml(config: Config, path: Path) -> None:
 
 def _merge_dict(config: Config, data: dict[str, Any]) -> None:
     """Merge dictionary values into config."""
+    # Backward compat: translate deprecated container_socket to ignored warning
+    if "container_socket" in data:
+        logger.warning(
+            "container_socket is deprecated and ignored. "
+            "Use mounts = [\"/var/run/docker.sock\"] for DoD, "
+            "or podman = true for DinD."
+        )
+        data = {k: v for k, v in data.items() if k != "container_socket"}
+
     for key, value in data.items():
         if key == "resources" and isinstance(value, dict) and config.resources is not None:
             # Handle nested resources
@@ -260,7 +274,7 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
         # Validate list fields before modifying the dict
         parsed_lists: dict[str, list[str]] = {}
         valid = True
-        for field_name in ("command", "yolo_flags", "mounts", "ports"):
+        for field_name in ("command", "yolo_flags", "mounts", "ports", "devices"):
             if field_name in tool_data:
                 val = tool_data[field_name]
                 if isinstance(val, list) and all(isinstance(v, str) for v in val):
@@ -292,6 +306,14 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
         if not valid:
             continue
 
+        # Backward compat: warn on deprecated container_socket in tool config
+        if "container_socket" in tool_data:
+            logger.warning(
+                "container_socket in tool '%s' is deprecated and ignored. "
+                "Use mounts for DoD or podman = true for DinD.",
+                name,
+            )
+
         # Now safe to create/update the entry
         existing = tools.get(name)
         if existing is None:
@@ -306,6 +328,8 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
             existing.mounts = parsed_lists["mounts"]
         if "ports" in parsed_lists:
             existing.ports = parsed_lists["ports"]
+        if "devices" in parsed_lists:
+            existing.devices = parsed_lists["devices"]
         if parsed_env is not None:
             existing.env = parsed_env
 
