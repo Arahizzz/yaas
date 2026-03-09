@@ -80,7 +80,14 @@ class ContainerSpec:
     # Port publishing
     ports: list[str] | None = None  # e.g., ["8080:8080", "3000:3000"]
 
+    # Devices
+    devices: list[str] | None = None  # e.g., ["/dev/fuse"]
+
+    # UID spoofing (per-tool: only AI CLIs need non-root identity)
+    spoof_uid: bool = False
+
     # Security
+    privileged: bool = False  # --privileged (all caps, no seccomp, all devices)
     capabilities: list[str] | None = None  # Exact cap set; triggers --cap-drop ALL + --cap-add each
     seccomp_profile: str | None = None  # path to seccomp JSON profile
 
@@ -166,18 +173,16 @@ class PodmanRuntime:
         pass
 
     def _add_userns_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
-        """Add user namespace flags. Override in subclasses for different behavior."""
-        # Use keep-id to preserve UID mapping in rootless podman.
-        # This makes host UID 1000 = container UID 1000, so files are
-        # readable and YOLO flags work (Claude blocks them for root).
-        cmd.append("--userns=keep-id")
+        """No userns — rootless podman maps container UID 0 → host UID. LD_PRELOAD spoofs."""
+        pass
 
     def _add_user_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
-        """Add user identity flags. Override in subclasses for different behavior."""
-        cmd.extend(["--user", spec.user])
-        # Preserve host supplementary groups (needed for docker socket access with userns)
-        if spec.groups:
-            cmd.extend(["--group-add", "keep-groups"])
+        """Pass host UID/GID and optional spoof flag."""
+        if spec.user:
+            uid, gid = spec.user.split(":")
+            cmd.extend(["-e", f"YAAS_HOST_UID={uid}", "-e", f"YAAS_HOST_GID={gid}"])
+        if spec.spoof_uid:
+            cmd.extend(["-e", "YAAS_SPOOF_UID=1"])
 
     def _build_command(self, spec: ContainerSpec) -> list[str]:
         cmd = [*self.command_prefix, "run", "--rm"]
@@ -235,15 +240,24 @@ class PodmanRuntime:
         if spec.pids_limit:
             cmd.extend(["--pids-limit", str(spec.pids_limit)])
 
-        # Security: capabilities (explicit set = drop ALL + add back each)
-        if spec.capabilities is not None:
-            cmd.extend(["--cap-drop", "ALL"])
-            for cap in spec.capabilities:
-                cmd.extend(["--cap-add", cap])
+        # Devices
+        if spec.devices:
+            for device in spec.devices:
+                cmd.extend(["--device", device])
 
-        # Security: seccomp profile
-        if spec.seccomp_profile:
-            cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
+        # Security
+        if spec.privileged:
+            cmd.append("--privileged")
+        else:
+            # Capabilities (explicit set = drop ALL + add back each)
+            if spec.capabilities is not None:
+                cmd.extend(["--cap-drop", "ALL"])
+                for cap in spec.capabilities:
+                    cmd.extend(["--cap-add", cap])
+
+            # Seccomp profile
+            if spec.seccomp_profile:
+                cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
 
         # Image and command
         cmd.append(spec.image)
@@ -267,7 +281,6 @@ class PodmanKrunRuntime(PodmanRuntime):
     # Features incompatible with libkrun MicroVMs (host sockets, FUSE mounts, etc.)
     _INCOMPATIBLE_FEATURES: dict[str, str] = {
         "lxcfs": "lxcfs (not needed, VM has its own /proc)",
-        "container_socket": "container socket passthrough (virtiofs can't forward Unix sockets)",
         "clipboard": "clipboard passthrough (virtiofs can't forward Unix sockets)",
         "ssh_agent": "SSH agent forwarding (virtiofs can't forward Unix sockets)",
     }
@@ -284,14 +297,6 @@ class PodmanKrunRuntime(PodmanRuntime):
             logger.warning("capability restrictions are not supported with libkrun — disabling")
             config.security.capabilities = None
 
-    def _add_userns_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
-        """No userns for krun — VM boots as root, rootless podman maps UID 0 → host UID."""
-        pass
-
-    def _add_user_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
-        """No --user for krun — VM ignores it. LD_PRELOAD spoofs UID instead."""
-        pass
-
     def _build_command(self, spec: ContainerSpec) -> list[str]:
         cmd = super()._build_command(spec)
         image_idx = cmd.index(spec.image)
@@ -301,13 +306,6 @@ class PodmanKrunRuntime(PodmanRuntime):
             "-e", "NIX_CONFIG=substitute = true",
             "--annotation=run.oci.handler=krun",
         ]
-        # Pass fake UID/GID for LD_PRELOAD spoofing in the entrypoint
-        if spec.user:
-            uid, gid = spec.user.split(":")
-            krun_flags[0:0] = [
-                "-e", f"YAAS_FAKE_UID={uid}",
-                "-e", f"YAAS_FAKE_GID={gid}",
-            ]
         cmd[image_idx:image_idx] = krun_flags
         return cmd
 
@@ -319,9 +317,25 @@ class DockerRuntime:
 
     def __init__(self) -> None:
         self._use_sudo = False
+        self._rootless: bool | None = None  # Lazy-detected
         # Check if we need sudo to access docker socket
         if not _can_access_docker_socket() and shutil.which("sudo") is not None:
             self._use_sudo = True
+
+    def _is_rootless(self) -> bool:
+        """Detect if Docker is running in rootless mode (cached)."""
+        if self._rootless is None:
+            try:
+                result = subprocess.run(
+                    [*self.command_prefix, "info", "-f", "{{.SecurityOptions}}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self._rootless = "rootless" in (result.stdout or "")
+            except (subprocess.TimeoutExpired, OSError):
+                self._rootless = False
+        return self._rootless
 
     @property
     def command_prefix(self) -> list[str]:
@@ -374,13 +388,14 @@ class DockerRuntime:
         if spec.stdin_open:
             cmd.append("-i")
 
-        # User
-        cmd.extend(["--user", spec.user])
-
-        # Supplementary groups
-        if spec.groups:
-            for gid in spec.groups:
-                cmd.extend(["--group-add", str(gid)])
+        # User identity: pass host UID/GID for entrypoint setup (chown, user creation).
+        if spec.user:
+            uid, gid = spec.user.split(":")
+            cmd.extend(["-e", f"YAAS_HOST_UID={uid}", "-e", f"YAAS_HOST_GID={gid}"])
+        if spec.spoof_uid:
+            cmd.extend(["-e", "YAAS_SPOOF_UID=1"])
+        if not self._is_rootless():
+            cmd.extend(["-e", "YAAS_DOCKER_ROOTFUL=1"])
 
         # Working directory
         cmd.extend(["--workdir", spec.working_dir])
@@ -422,15 +437,24 @@ class DockerRuntime:
         if spec.pids_limit:
             cmd.extend(["--pids-limit", str(spec.pids_limit)])
 
-        # Security: capabilities (explicit set = drop ALL + add back each)
-        if spec.capabilities is not None:
-            cmd.extend(["--cap-drop", "ALL"])
-            for cap in spec.capabilities:
-                cmd.extend(["--cap-add", cap])
+        # Devices
+        if spec.devices:
+            for device in spec.devices:
+                cmd.extend(["--device", device])
 
-        # Security: seccomp profile
-        if spec.seccomp_profile:
-            cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
+        # Security
+        if spec.privileged:
+            cmd.append("--privileged")
+        else:
+            # Capabilities (explicit set = drop ALL + add back each)
+            if spec.capabilities is not None:
+                cmd.extend(["--cap-drop", "ALL"])
+                for cap in spec.capabilities:
+                    cmd.extend(["--cap-add", cap])
+
+            # Seccomp profile
+            if spec.seccomp_profile:
+                cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
 
         # Image and command
         cmd.append(spec.image)
