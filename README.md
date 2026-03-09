@@ -269,7 +269,9 @@ runtime = "podman"
 # Feature flags
 ssh_agent = true           # Forward SSH agent socket
 git_config = true          # Mount .gitconfig and .config/git
-container_socket = false   # Mount docker/podman socket for docker-in-docker
+podman = false             # Enable rootless Podman inside container (DinD)
+podman_docker_socket = false  # Start Podman socket (Docker-compatible API)
+devices = []              # Pass through host devices (e.g., ["/dev/fuse"])
 clipboard = false          # Enable clipboard access for image pasting
 
 # Isolation
@@ -504,7 +506,7 @@ YAAS provides filesystem and resource isolation, but it intentionally mounts sen
 - **Tool mounts** (`mounts` in `[tools.*]`): Mounts tool-specific config dirs like `.claude`, `.codex`, `.gemini`. These may contain conversation history, cached credentials, or API keys. Only applied for the active tool.
 - **Git config** (`git_config`): Mounts `.gitconfig` which may include credentials or credential helpers.
 - **SSH agent** (`ssh_agent`): Forwards your SSH agent socket. The agent can use your SSH keys to authenticate to remote servers.
-- **Container socket** (`container_socket`): Mounts the Docker/Podman socket. This effectively gives the container root-equivalent access to your system.
+- **Podman DinD** (`podman`): Enables rootless Podman inside the container by adding `SYS_ADMIN` capability and `/dev/fuse` device. For Docker-outside-Docker, mount the host socket manually via `mounts = ["/var/run/docker.sock"]` — this gives root-equivalent access to your system.
 - **API keys** (`env` in `[tools.*]`): Keys like `ANTHROPIC_API_KEY` are forwarded only for the specific tool that declares them. No keys are forwarded for `yaas run` or `yaas shell` unless declared in the global `[env]`.
 
 The sandbox prevents the agent from accessing arbitrary files on your system, but anything you mount is fully accessible. If you're running untrusted code, consider disabling these options.
