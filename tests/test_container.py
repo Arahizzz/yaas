@@ -1099,6 +1099,17 @@ class TestSecurityPassthrough:
         spec = build_container_spec(config, tmp_path, ["bash"])
         assert spec.capabilities == ["CHOWN", "NET_RAW"]
 
+    def test_claude_tool_sets_is_sandbox(self, mock_linux, clean_env, tmp_path: Path) -> None:
+        """Claude tool env includes IS_SANDBOX=1 for sandbox-aware root check bypass."""
+        config = Config(
+            active_tool="claude",
+            tools={
+                "claude": ToolConfig(env={"IS_SANDBOX": "1"}),
+            },
+        )
+        spec = build_container_spec(config, tmp_path, ["bash"])
+        assert spec.environment.get("IS_SANDBOX") == "1"
+
 
 # ============================================================
 # lxcfs mount tests

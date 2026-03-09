@@ -16,7 +16,6 @@
 # podman_docker_socket = false  # Start Podman socket (Docker-compatible API)
 # devices = []             # Pass through host devices (e.g., ["/dev/fuse"])
 # mounts = ["/var/run/docker.sock"]  # Docker-outside-Docker (mount host socket)
-# spoof_uid = false        # Spoof UID via LD_PRELOAD (for AI YOLO mode; per-tool override)
 # clipboard = false        # Enable clipboard access for image pasting
 
 # Isolation
@@ -102,14 +101,12 @@ auto_upgrade_tools = false
 [tools.claude]
 command = ["claude", "--append-system-prompt", "$YAAS_PREAMBLE"]
 yolo_flags = ["--dangerously-skip-permissions"]
-spoof_uid = true
 mounts = ["~/.claude", "~/.claude.json", "~/.claude/ide:ro"]
-env = { ANTHROPIC_API_KEY = true }
+env = { ANTHROPIC_API_KEY = true, IS_SANDBOX = "1" }
 
 # [tools.codex]
 # command = ["codex", "-c", "developer_instructions=$YAAS_PREAMBLE"]
 # yolo_flags = ["--dangerously-bypass-approvals-and-sandbox"]
-# spoof_uid = true
 # mounts = ["~/.codex"]
 # env = { OPENAI_API_KEY = true }
 
@@ -119,13 +116,11 @@ env = { ANTHROPIC_API_KEY = true }
 
 # [tools.gemini]
 # yolo_flags = ["--yolo"]
-# spoof_uid = true
 # mounts = ["~/.gemini"]
 # env = { GEMINI_API_KEY = true, GOOGLE_API_KEY = true }
 
 # [tools.opencode]
 # yolo_flags = []
-# spoof_uid = true
 # mounts = ["~/.config/opencode", "~/.local/share/opencode"]
 
 # [tools.aider]

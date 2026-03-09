@@ -251,8 +251,6 @@ def build_container_spec(
         memory_swap=config.resources.memory_swap,
         cpus=config.resources.cpus,
         pids_limit=config.resources.pids_limit,
-        # UID spoofing (per-tool)
-        spoof_uid=config.spoof_uid,
         # Security
         privileged=privileged,
         capabilities=capabilities,

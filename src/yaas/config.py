@@ -65,7 +65,6 @@ class ContainerSettings:
     resources: ResourceLimits | None = None
     security: SecuritySettings | None = None
     auto_pull_image: bool | None = None
-    spoof_uid: bool | None = None
     auto_upgrade_tools: bool | None = None
     mounts: list[str] = field(default_factory=list)
     ports: list[str] = field(default_factory=list)
@@ -120,7 +119,6 @@ class Config(ContainerSettings):
     )
 
     # Override ContainerSettings auto-update defaults to concrete values
-    spoof_uid: bool = False  # Spoof UID via LD_PRELOAD (per-tool override)
     auto_pull_image: bool = True  # Pull image on every start
     preamble: bool = True  # Set YAAS_PREAMBLE env var with sandbox info
     auto_upgrade_tools: bool = True  # Run mise upgrade on every start

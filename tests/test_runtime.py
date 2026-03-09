@@ -70,7 +70,7 @@ class TestPodmanRuntime:
         assert "--rm" in cmd
         assert "-t" in cmd
         assert "-i" in cmd
-        # Podman uses LD_PRELOAD UID spoofing, not --user or --userns=keep-id
+        # Podman passes UID/GID as env vars, no --user or --userns
         assert "--user" not in cmd
         assert "--userns=keep-id" not in cmd
         assert "YAAS_HOST_UID=1000" in cmd
@@ -381,8 +381,8 @@ class TestDockerRuntime:
         idx = cmd.index("YAAS_RUNTIME=docker")
         assert cmd[idx - 1] == "-e"
 
-    def test_rootful_uses_gosu_env(self) -> None:
-        """Test rootful Docker passes YAAS_DOCKER_ROOTFUL for gosu privilege drop."""
+    def test_rootful_uses_setpriv_env(self) -> None:
+        """Test rootful Docker passes YAAS_DOCKER_ROOTFUL for setpriv privilege drop."""
         with mock_docker_socket(accessible=True):
             runtime = DockerRuntime()
         runtime._rootless = False
@@ -465,64 +465,6 @@ class TestDockerRuntime:
             assert result is True
             args = mock_run.call_args[0][0]
             assert args == ["docker", "volume", "rm", "-f", "test-volume"]
-
-
-# ============================================================
-# UID spoofing tests
-# ============================================================
-
-
-class TestSpoofUid:
-    """Tests for per-tool spoof_uid flag."""
-
-    def test_podman_spoof_uid_passes_env(self) -> None:
-        """Test Podman passes YAAS_SPOOF_UID=1 when spoof_uid is true."""
-        with patch("yaas.runtime.is_linux", return_value=True):
-            runtime = PodmanRuntime()
-            spec = make_spec(spoof_uid=True)
-            cmd = runtime._build_command(spec)
-
-        assert "YAAS_SPOOF_UID=1" in cmd
-
-    def test_podman_no_spoof_uid_by_default(self) -> None:
-        """Test Podman does not pass YAAS_SPOOF_UID when spoof_uid is false."""
-        with patch("yaas.runtime.is_linux", return_value=True):
-            runtime = PodmanRuntime()
-            spec = make_spec(spoof_uid=False)
-            cmd = runtime._build_command(spec)
-
-        assert "YAAS_SPOOF_UID=1" not in cmd
-
-    def test_docker_spoof_uid_passes_env(self) -> None:
-        """Test Docker passes YAAS_SPOOF_UID=1 when spoof_uid is true."""
-        with mock_docker_socket(accessible=True):
-            runtime = DockerRuntime()
-
-        spec = make_spec(spoof_uid=True)
-        cmd = runtime._build_command(spec)
-
-        assert "YAAS_SPOOF_UID=1" in cmd
-
-    def test_docker_no_spoof_uid_by_default(self) -> None:
-        """Test Docker does not pass YAAS_SPOOF_UID when spoof_uid is false."""
-        with mock_docker_socket(accessible=True):
-            runtime = DockerRuntime()
-
-        spec = make_spec(spoof_uid=False)
-        cmd = runtime._build_command(spec)
-
-        assert "YAAS_SPOOF_UID=1" not in cmd
-
-    def test_host_uid_always_passed(self) -> None:
-        """Test YAAS_HOST_UID/GID are always passed regardless of spoof_uid."""
-        with patch("yaas.runtime.is_linux", return_value=True):
-            runtime = PodmanRuntime()
-            spec = make_spec(spoof_uid=False, user="1000:1000")
-            cmd = runtime._build_command(spec)
-
-        assert "YAAS_HOST_UID=1000" in cmd
-        assert "YAAS_HOST_GID=1000" in cmd
-        assert "YAAS_SPOOF_UID=1" not in cmd
 
 
 # ============================================================

@@ -83,9 +83,6 @@ class ContainerSpec:
     # Devices
     devices: list[str] | None = None  # e.g., ["/dev/fuse"]
 
-    # UID spoofing (per-tool: only AI CLIs need non-root identity)
-    spoof_uid: bool = False
-
     # Security
     privileged: bool = False  # --privileged (all caps, no seccomp, all devices)
     capabilities: list[str] | None = None  # Exact cap set; triggers --cap-drop ALL + --cap-add each
@@ -173,16 +170,14 @@ class PodmanRuntime:
         pass
 
     def _add_userns_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
-        """No userns — rootless podman maps container UID 0 → host UID. LD_PRELOAD spoofs."""
+        """No userns — rootless podman maps container UID 0 → host UID."""
         pass
 
     def _add_user_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
-        """Pass host UID/GID and optional spoof flag."""
+        """Pass host UID/GID for entrypoint user setup."""
         if spec.user:
             uid, gid = spec.user.split(":")
             cmd.extend(["-e", f"YAAS_HOST_UID={uid}", "-e", f"YAAS_HOST_GID={gid}"])
-        if spec.spoof_uid:
-            cmd.extend(["-e", "YAAS_SPOOF_UID=1"])
 
     def _build_command(self, spec: ContainerSpec) -> list[str]:
         cmd = [*self.command_prefix, "run", "--rm"]
@@ -392,8 +387,6 @@ class DockerRuntime:
         if spec.user:
             uid, gid = spec.user.split(":")
             cmd.extend(["-e", f"YAAS_HOST_UID={uid}", "-e", f"YAAS_HOST_GID={gid}"])
-        if spec.spoof_uid:
-            cmd.extend(["-e", "YAAS_SPOOF_UID=1"])
         if not self._is_rootless():
             cmd.extend(["-e", "YAAS_DOCKER_ROOTFUL=1"])
 
