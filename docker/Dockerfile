@@ -53,8 +53,8 @@ RUN mkdir -p "$HOME/.local/bin" "$HOME/.local/share/mise" "$HOME/.cache" "$HOME/
 # ============================================================
 # 5. Entrypoint scripts (change most often — last for cache)
 # ============================================================
-COPY --chmod=755 entrypoint.sh entrypoint-podman.sh entrypoint-docker.sh entrypoint-krun.sh setup-podman.sh /
+COPY --chmod=755 entrypoint.sh entrypoint-podman.sh entrypoint-docker.sh entrypoint-krun.sh setup-podman.sh /opt/yaas/
 
 WORKDIR /workspace
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/opt/yaas/entrypoint.sh"]
 CMD ["bash"]

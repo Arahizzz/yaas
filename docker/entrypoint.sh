@@ -15,9 +15,9 @@ HOST_GID="${YAAS_HOST_GID:-1000}"
 # Runtime-specific setup (sets SHELL_UID/SHELL_GID, optionally YAAS_SETPRIV)
 # ============================================================
 case "${YAAS_RUNTIME}" in
-    podman)      source /entrypoint-podman.sh ;;
-    docker)      source /entrypoint-docker.sh ;;
-    podman-krun) source /entrypoint-krun.sh ;;
+    podman)      source /opt/yaas/entrypoint-podman.sh ;;
+    docker)      source /opt/yaas/entrypoint-docker.sh ;;
+    podman-krun) source /opt/yaas/entrypoint-krun.sh ;;
     *)           echo "Unknown YAAS_RUNTIME: ${YAAS_RUNTIME:-<unset>}" >&2; exit 1 ;;
 esac
 
@@ -110,7 +110,7 @@ eval "$(mise activate bash)"
 rm -f "$HOME/.local/bin/podman" "$HOME/.local/bin/nix"
 
 if [[ "${YAAS_PODMAN:-}" == "1" ]]; then
-    source /setup-podman.sh
+    source /opt/yaas/setup-podman.sh
 fi
 
 # ============================================================
