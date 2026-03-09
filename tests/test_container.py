@@ -883,6 +883,10 @@ class TestActiveToolScoping:
 
     def test_active_tool_mounts_applied(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """active_tool set: tool's mounts are applied."""
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        (home / ".aider").mkdir(parents=True)
+
         config = Config()
         config.active_tool = "claude"
         config.tools = {
@@ -890,7 +894,8 @@ class TestActiveToolScoping:
             "aider": ToolConfig(mounts=["~/.aider"]),
         }
 
-        spec = build_container_spec(config, tmp_path, ["bash"])
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            spec = build_container_spec(config, tmp_path, ["bash"])
 
         targets = [m.target for m in spec.mounts]
         sandbox_home = spec.environment.get("HOME", "/home/user")
@@ -968,13 +973,17 @@ class TestActiveToolScoping:
 
     def test_tool_mount_readonly(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Tool mount with :ro modifier is mounted read-only."""
+        home = tmp_path / "home"
+        (home / ".claude" / "ide").mkdir(parents=True)
+
         config = Config()
         config.active_tool = "claude"
         config.tools = {
             "claude": ToolConfig(mounts=["~/.claude/ide:ro"]),
         }
 
-        spec = build_container_spec(config, tmp_path, ["bash"])
+        with patch.dict(os.environ, {"HOME": str(home)}):
+            spec = build_container_spec(config, tmp_path, ["bash"])
 
         sandbox_home = spec.environment.get("HOME", "/home/user")
         ide_mount = next(
