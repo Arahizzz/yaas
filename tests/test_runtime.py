@@ -3,8 +3,8 @@
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
-from tests.helpers import make_spec, mock_docker_socket, mock_which
-from yaas.runtime import DockerRuntime, Mount, PodmanRuntime
+from tests.helpers import make_config, make_spec, mock_docker_socket, mock_which
+from yaas.runtime import DockerRuntime, Mount, PodmanKrunRuntime, PodmanRuntime
 
 # ============================================================
 # Mount and ContainerSpec dataclass tests
@@ -70,8 +70,11 @@ class TestPodmanRuntime:
         assert "--rm" in cmd
         assert "-t" in cmd
         assert "-i" in cmd
-        assert "--user" in cmd
-        assert "1000:1000" in cmd
+        # Podman passes UID/GID as env vars, no --user or --userns
+        assert "--user" not in cmd
+        assert "--userns=keep-id" not in cmd
+        assert "YAAS_HOST_UID=1000" in cmd
+        assert "YAAS_HOST_GID=1000" in cmd
         assert "--memory" in cmd
         assert "8g" in cmd
         assert "--cpus" in cmd
@@ -79,6 +82,17 @@ class TestPodmanRuntime:
         assert "test:latest" in cmd
         assert "echo" in cmd
         assert "hello" in cmd
+
+    def test_injects_yaas_runtime_env(self) -> None:
+        """Test PodmanRuntime injects YAAS_RUNTIME=podman."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec()
+            cmd = runtime._build_command(spec)
+
+        assert "YAAS_RUNTIME=podman" in cmd
+        idx = cmd.index("YAAS_RUNTIME=podman")
+        assert cmd[idx - 1] == "-e"
 
     def test_command_prefix(self) -> None:
         """Test PodmanRuntime command_prefix returns podman."""
@@ -149,6 +163,148 @@ class TestPodmanRuntime:
 
 
 # ============================================================
+# PodmanKrunRuntime tests
+# ============================================================
+
+
+class TestPodmanKrunRuntime:
+    """Tests for PodmanKrunRuntime."""
+
+    def test_build_command_has_annotation(self) -> None:
+        """Test that krun annotation is added before image name."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+            spec = make_spec(command=["echo", "hello"])
+            cmd = runtime._build_command(spec)
+
+        assert "--annotation=run.oci.handler=krun" in cmd
+        # Annotation must appear before the image
+        ann_idx = cmd.index("--annotation=run.oci.handler=krun")
+        img_idx = cmd.index("test:latest")
+        assert ann_idx < img_idx
+
+    def test_omits_userns_and_user_flags(self) -> None:
+        """Test that krun omits --userns and --user (VM boots as root)."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+            spec = make_spec()
+            cmd = runtime._build_command(spec)
+
+        assert "--userns=keep-id" not in cmd
+        assert "--user" not in cmd
+        assert "podman" == cmd[0]
+
+    def test_passes_runtime_and_host_uid_env_vars(self) -> None:
+        """Test that krun injects YAAS_RUNTIME and YAAS_HOST_UID/GID."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+            spec = make_spec(user="1000:1000")
+            cmd = runtime._build_command(spec)
+
+        assert "YAAS_RUNTIME=podman-krun" in cmd
+        assert "YAAS_HOST_UID=1000" in cmd
+        assert "YAAS_HOST_GID=1000" in cmd
+        uid_idx = cmd.index("YAAS_HOST_UID=1000")
+        gid_idx = cmd.index("YAAS_HOST_GID=1000")
+        assert cmd[uid_idx - 1] == "-e"
+        assert cmd[gid_idx - 1] == "-e"
+
+    def test_forces_nix_substituters(self) -> None:
+        """Test that krun injects NIX_CONFIG to force substituters online."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+            spec = make_spec()
+            cmd = runtime._build_command(spec)
+
+        assert "NIX_CONFIG=substitute = true" in cmd
+        nix_idx = cmd.index("NIX_CONFIG=substitute = true")
+        assert cmd[nix_idx - 1] == "-e"
+
+    def test_available_with_krun(self) -> None:
+        """Test is_available when both podman and krun are present."""
+        with ExitStack() as stack:
+            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            stack.enter_context(
+                mock_which({"podman": "/usr/bin/podman", "krun": "/usr/bin/krun"})
+            )
+            runtime = PodmanKrunRuntime()
+            assert runtime.is_available() is True
+
+    def test_not_available_without_krun(self) -> None:
+        """Test is_available when krun binary is missing."""
+        with ExitStack() as stack:
+            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            stack.enter_context(mock_which({"podman": "/usr/bin/podman", "krun": None}))
+            runtime = PodmanKrunRuntime()
+            assert runtime.is_available() is False
+
+    def test_not_available_on_non_linux(self) -> None:
+        """Test is_available on non-Linux platforms."""
+        with ExitStack() as stack:
+            stack.enter_context(patch("yaas.runtime.is_linux", return_value=False))
+            stack.enter_context(
+                mock_which({"podman": "/usr/bin/podman", "krun": "/usr/bin/krun"})
+            )
+            runtime = PodmanKrunRuntime()
+            assert runtime.is_available() is False
+
+    def test_adjust_config_disables_lxcfs(self) -> None:
+        """Test that adjust_config disables lxcfs for MicroVM compatibility."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(lxcfs=True)
+        runtime.adjust_config(config)
+        assert config.lxcfs is False
+
+    def test_adjust_config_noop_when_lxcfs_disabled(self) -> None:
+        """Test that adjust_config is a no-op when lxcfs is already disabled."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(lxcfs=False)
+        runtime.adjust_config(config)
+        assert config.lxcfs is False
+
+    def test_adjust_config_disables_network_host(self) -> None:
+        """Test that adjust_config falls back from host to bridge networking."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(network_mode="host")
+        runtime.adjust_config(config)
+        assert config.network_mode == "bridge"
+
+    def test_adjust_config_preserves_bridge_network(self) -> None:
+        """Test that adjust_config leaves bridge networking unchanged."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(network_mode="bridge")
+        runtime.adjust_config(config)
+        assert config.network_mode == "bridge"
+
+    def test_adjust_config_disables_capabilities(self) -> None:
+        """Test that adjust_config clears capability restrictions for MicroVM."""
+        from yaas.config import SecuritySettings
+
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(
+            security=SecuritySettings(capabilities=["CHOWN", "DAC_OVERRIDE"]),
+        )
+        runtime.adjust_config(config)
+        assert config.security.capabilities is None
+
+    def test_adjust_config_noop_when_no_capabilities(self) -> None:
+        """Test that adjust_config is a no-op when capabilities are already None."""
+        from yaas.config import SecuritySettings
+
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanKrunRuntime()
+        config = make_config(security=SecuritySettings(capabilities=None))
+        runtime.adjust_config(config)
+        assert config.security.capabilities is None
+
+
+
+# ============================================================
 # DockerRuntime tests
 # ============================================================
 
@@ -212,6 +368,46 @@ class TestDockerRuntime:
             stack.enter_context(mock_which({"docker": "/usr/bin/docker", "sudo": None}))
             runtime = DockerRuntime()
             assert runtime.is_available() is False
+
+    def test_injects_yaas_runtime_env(self) -> None:
+        """Test DockerRuntime injects YAAS_RUNTIME=docker."""
+        with mock_docker_socket(accessible=True):
+            runtime = DockerRuntime()
+
+        spec = make_spec()
+        cmd = runtime._build_command(spec)
+
+        assert "YAAS_RUNTIME=docker" in cmd
+        idx = cmd.index("YAAS_RUNTIME=docker")
+        assert cmd[idx - 1] == "-e"
+
+    def test_rootful_uses_setpriv_env(self) -> None:
+        """Test rootful Docker passes YAAS_DOCKER_ROOTFUL for setpriv privilege drop."""
+        with mock_docker_socket(accessible=True):
+            runtime = DockerRuntime()
+        runtime._rootless = False
+
+        spec = make_spec()
+        cmd = runtime._build_command(spec)
+
+        assert "--user" not in cmd
+        assert "YAAS_HOST_UID=1000" in cmd
+        assert "YAAS_HOST_GID=1000" in cmd
+        assert "YAAS_DOCKER_ROOTFUL=1" in cmd
+
+    def test_rootless_passes_host_uid(self) -> None:
+        """Test rootless Docker passes YAAS_HOST_UID/GID without YAAS_DOCKER_ROOTFUL."""
+        with mock_docker_socket(accessible=True):
+            runtime = DockerRuntime()
+        runtime._rootless = True
+
+        spec = make_spec()
+        cmd = runtime._build_command(spec)
+
+        assert "--user" not in cmd
+        assert "YAAS_HOST_UID=1000" in cmd
+        assert "YAAS_HOST_GID=1000" in cmd
+        assert "YAAS_DOCKER_ROOTFUL=1" not in cmd
 
     def test_build_command_with_sudo(self) -> None:
         """Test DockerRuntime command building when using sudo."""
@@ -365,3 +561,44 @@ class TestSecurityFlags:
             if x == "--security-opt" and cmd[i + 1].startswith("seccomp=")
         ]
         assert len(seccomp_opts) == 0
+
+
+# ============================================================
+# Port publishing tests
+# ============================================================
+
+
+class TestPortPublishing:
+    """Tests for port publishing CLI flag generation."""
+
+    def test_podman_ports(self) -> None:
+        """Test Podman generates -p flags from ports list."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec(ports=["8080:8080", "3000:3000"])
+            cmd = runtime._build_command(spec)
+
+        port_indices = [i for i, x in enumerate(cmd) if x == "-p"]
+        port_values = [cmd[i + 1] for i in port_indices]
+        assert "8080:8080" in port_values
+        assert "3000:3000" in port_values
+
+    def test_docker_ports(self) -> None:
+        """Test Docker generates -p flags from ports list."""
+        with mock_docker_socket(accessible=True):
+            runtime = DockerRuntime()
+
+        spec = make_spec(ports=["8080:8080"])
+        cmd = runtime._build_command(spec)
+
+        assert "-p" in cmd
+        assert cmd[cmd.index("-p") + 1] == "8080:8080"
+
+    def test_no_port_flags_when_none(self) -> None:
+        """Test that no port flags are generated when ports is None."""
+        with patch("yaas.runtime.is_linux", return_value=True):
+            runtime = PodmanRuntime()
+            spec = make_spec()
+            cmd = runtime._build_command(spec)
+
+        assert "-p" not in cmd

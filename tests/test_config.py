@@ -23,7 +23,8 @@ def test_default_config() -> None:
     assert config.runtime is None
     assert config.ssh_agent is False
     assert config.git_config is False
-    assert config.container_socket is False
+    assert config.podman is False
+    assert config.podman_docker_socket is False
     assert config.network_mode == "bridge"
     assert config.mount_project is True
     assert config.readonly_project is False
@@ -48,7 +49,8 @@ def test_container_settings_defaults() -> None:
     settings = ContainerSettings()
     assert settings.ssh_agent is None
     assert settings.git_config is None
-    assert settings.container_socket is None
+    assert settings.podman is None
+    assert settings.podman_docker_socket is None
     assert settings.clipboard is None
     assert settings.network_mode is None
     assert settings.mount_project is None
@@ -520,7 +522,8 @@ def test_tool_override_bool_fields_from_toml() -> None:
 yolo_flags = ["--dangerously-skip-permissions"]
 ssh_agent = true
 git_config = true
-container_socket = false
+podman = true
+podman_docker_socket = false
 clipboard = true
 readonly_project = true
 """)
@@ -529,7 +532,8 @@ readonly_project = true
     tc = config.tools["claude"]
     assert tc.ssh_agent is True
     assert tc.git_config is True
-    assert tc.container_socket is False
+    assert tc.podman is True
+    assert tc.podman_docker_socket is False
     assert tc.clipboard is True
     assert tc.readonly_project is True
 
@@ -760,6 +764,17 @@ def test_resolve_security_does_not_mutate_original() -> None:
     assert "NET_RAW" not in config.security.capabilities
     # Resolved has override
     assert result.security.capabilities == ["CHOWN", "NET_RAW"]
+
+
+def test_resolve_runtime_override() -> None:
+    """Test that tool runtime overrides global runtime."""
+    config = Config(
+        runtime=None,
+        active_tool="claude",
+        tools={"claude": ToolConfig(runtime="podman-krun")},
+    )
+    result = resolve_effective_config(config)
+    assert result.runtime == "podman-krun"
 
 
 def test_resolve_lxcfs_override() -> None:

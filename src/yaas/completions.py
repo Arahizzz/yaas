@@ -5,6 +5,14 @@ from __future__ import annotations
 from enum import Enum
 
 
+class RuntimeChoice(str, Enum):
+    """Available container runtimes."""
+
+    podman = "podman"
+    podman_krun = "podman-krun"
+    docker = "docker"
+
+
 class NetworkMode(str, Enum):
     """Valid network modes for container isolation."""
 

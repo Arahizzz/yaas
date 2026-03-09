@@ -6,7 +6,10 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from .config import Config
 
 from .logging import get_logger
 from .platform import get_container_socket_paths, is_linux
@@ -74,7 +77,14 @@ class ContainerSpec:
     cpus: float | None = None  # e.g., 2.0
     pids_limit: int | None = None  # e.g., 1000
 
+    # Port publishing
+    ports: list[str] | None = None  # e.g., ["8080:8080", "3000:3000"]
+
+    # Devices
+    devices: list[str] | None = None  # e.g., ["/dev/fuse"]
+
     # Security
+    privileged: bool = False  # --privileged (all caps, no seccomp, all devices)
     capabilities: list[str] | None = None  # Exact cap set; triggers --cap-drop ALL + --cap-add each
     seccomp_profile: str | None = None  # path to seccomp JSON profile
 
@@ -103,6 +113,10 @@ class ContainerRuntime(Protocol):
 
     def remove_volume(self, name: str) -> bool:
         """Remove a named volume. Returns True on success."""
+        ...
+
+    def adjust_config(self, config: Config) -> None:
+        """Adjust config for runtime compatibility. Default: no-op."""
         ...
 
 
@@ -152,13 +166,23 @@ class PodmanRuntime:
             logger.debug(f"Failed to remove volume {name}: {result.stderr}")
         return result.returncode == 0
 
+    def adjust_config(self, config: Config) -> None:
+        pass
+
+    def _add_userns_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
+        """No userns — rootless podman maps container UID 0 → host UID."""
+        pass
+
+    def _add_user_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
+        """Pass host UID/GID for entrypoint user setup."""
+        if spec.user:
+            uid, gid = spec.user.split(":")
+            cmd.extend(["-e", f"YAAS_HOST_UID={uid}", "-e", f"YAAS_HOST_GID={gid}"])
+
     def _build_command(self, spec: ContainerSpec) -> list[str]:
         cmd = [*self.command_prefix, "run", "--rm"]
 
-        # Use keep-id to preserve UID mapping in rootless podman.
-        # This makes host UID 1000 = container UID 1000, so files are
-        # readable and YOLO flags work (Claude blocks them for root).
-        cmd.append("--userns=keep-id")
+        self._add_userns_flags(cmd, spec)
 
         # Disable SELinux label confinement (needed for bind mounts: project dir, configs, sockets)
         cmd.extend(["--security-opt", "label=disable"])
@@ -169,12 +193,7 @@ class PodmanRuntime:
         if spec.stdin_open:
             cmd.append("-i")
 
-        # User
-        cmd.extend(["--user", spec.user])
-
-        # Preserve host supplementary groups (needed for docker socket access with userns)
-        if spec.groups:
-            cmd.extend(["--group-add", "keep-groups"])
+        self._add_user_flags(cmd, spec)
 
         # Working directory
         cmd.extend(["--workdir", spec.working_dir])
@@ -183,9 +202,17 @@ class PodmanRuntime:
         if spec.network_mode:
             cmd.extend(["--network", spec.network_mode])
 
+        # Port publishing
+        if spec.ports:
+            for port in spec.ports:
+                cmd.extend(["-p", port])
+
         # PID namespace
         if spec.pid_mode:
             cmd.extend(["--pid", spec.pid_mode])
+
+        # Runtime identifier
+        cmd.extend(["-e", f"YAAS_RUNTIME={self.name}"])
 
         # Environment
         for key, value in spec.environment.items():
@@ -208,20 +235,73 @@ class PodmanRuntime:
         if spec.pids_limit:
             cmd.extend(["--pids-limit", str(spec.pids_limit)])
 
-        # Security: capabilities (explicit set = drop ALL + add back each)
-        if spec.capabilities is not None:
-            cmd.extend(["--cap-drop", "ALL"])
-            for cap in spec.capabilities:
-                cmd.extend(["--cap-add", cap])
+        # Devices
+        if spec.devices:
+            for device in spec.devices:
+                cmd.extend(["--device", device])
 
-        # Security: seccomp profile
-        if spec.seccomp_profile:
-            cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
+        # Security
+        if spec.privileged:
+            cmd.append("--privileged")
+        else:
+            # Capabilities (explicit set = drop ALL + add back each)
+            if spec.capabilities is not None:
+                cmd.extend(["--cap-drop", "ALL"])
+                for cap in spec.capabilities:
+                    cmd.extend(["--cap-add", cap])
+
+            # Seccomp profile
+            if spec.seccomp_profile:
+                cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
 
         # Image and command
         cmd.append(spec.image)
         cmd.extend(spec.command)
 
+        return cmd
+
+
+class PodmanKrunRuntime(PodmanRuntime):
+    """Podman with libkrun MicroVM isolation.
+
+    Uses crun's krun handler to run containers inside lightweight VMs (KVM).
+    Requires crun-krun package (provides krun binary + libkrun.so).
+    """
+
+    name = "podman-krun"
+
+    def is_available(self) -> bool:
+        return super().is_available() and shutil.which("krun") is not None
+
+    # Features incompatible with libkrun MicroVMs (host sockets, FUSE mounts, etc.)
+    _INCOMPATIBLE_FEATURES: dict[str, str] = {
+        "lxcfs": "lxcfs (not needed, VM has its own /proc)",
+        "clipboard": "clipboard passthrough (virtiofs can't forward Unix sockets)",
+        "ssh_agent": "SSH agent forwarding (virtiofs can't forward Unix sockets)",
+    }
+
+    def adjust_config(self, config: Config) -> None:
+        for field, description in self._INCOMPATIBLE_FEATURES.items():
+            if getattr(config, field):
+                logger.warning(f"{description} is not supported with libkrun — disabling")
+                setattr(config, field, False)
+        if config.network_mode == "host":
+            logger.warning("--network host is not supported with libkrun — falling back to bridge")
+            config.network_mode = "bridge"
+        if config.security.capabilities is not None:
+            logger.warning("capability restrictions are not supported with libkrun — disabling")
+            config.security.capabilities = None
+
+    def _build_command(self, spec: ContainerSpec) -> list[str]:
+        cmd = super()._build_command(spec)
+        image_idx = cmd.index(spec.image)
+        krun_flags: list[str] = [
+            # krun's getifaddrs() returns no interfaces, making Nix think it's
+            # offline and disabling parallel substitutions. Force substituters on.
+            "-e", "NIX_CONFIG=substitute = true",
+            "--annotation=run.oci.handler=krun",
+        ]
+        cmd[image_idx:image_idx] = krun_flags
         return cmd
 
 
@@ -232,9 +312,25 @@ class DockerRuntime:
 
     def __init__(self) -> None:
         self._use_sudo = False
+        self._rootless: bool | None = None  # Lazy-detected
         # Check if we need sudo to access docker socket
         if not _can_access_docker_socket() and shutil.which("sudo") is not None:
             self._use_sudo = True
+
+    def _is_rootless(self) -> bool:
+        """Detect if Docker is running in rootless mode (cached)."""
+        if self._rootless is None:
+            try:
+                result = subprocess.run(
+                    [*self.command_prefix, "info", "-f", "{{.SecurityOptions}}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self._rootless = "rootless" in (result.stdout or "")
+            except (subprocess.TimeoutExpired, OSError):
+                self._rootless = False
+        return self._rootless
 
     @property
     def command_prefix(self) -> list[str]:
@@ -275,6 +371,9 @@ class DockerRuntime:
             logger.debug(f"Failed to remove volume {name}: {result.stderr}")
         return result.returncode == 0
 
+    def adjust_config(self, config: Config) -> None:
+        pass
+
     def _build_command(self, spec: ContainerSpec) -> list[str]:
         cmd = [*self.command_prefix, "run", "--rm"]
 
@@ -284,13 +383,12 @@ class DockerRuntime:
         if spec.stdin_open:
             cmd.append("-i")
 
-        # User
-        cmd.extend(["--user", spec.user])
-
-        # Supplementary groups
-        if spec.groups:
-            for gid in spec.groups:
-                cmd.extend(["--group-add", str(gid)])
+        # User identity: pass host UID/GID for entrypoint setup (chown, user creation).
+        if spec.user:
+            uid, gid = spec.user.split(":")
+            cmd.extend(["-e", f"YAAS_HOST_UID={uid}", "-e", f"YAAS_HOST_GID={gid}"])
+        if not self._is_rootless():
+            cmd.extend(["-e", "YAAS_DOCKER_ROOTFUL=1"])
 
         # Working directory
         cmd.extend(["--workdir", spec.working_dir])
@@ -299,9 +397,17 @@ class DockerRuntime:
         if spec.network_mode:
             cmd.extend(["--network", spec.network_mode])
 
+        # Port publishing
+        if spec.ports:
+            for port in spec.ports:
+                cmd.extend(["-p", port])
+
         # PID namespace
         if spec.pid_mode:
             cmd.extend(["--pid", spec.pid_mode])
+
+        # Runtime identifier
+        cmd.extend(["-e", f"YAAS_RUNTIME={self.name}"])
 
         # Environment
         for key, value in spec.environment.items():
@@ -324,15 +430,24 @@ class DockerRuntime:
         if spec.pids_limit:
             cmd.extend(["--pids-limit", str(spec.pids_limit)])
 
-        # Security: capabilities (explicit set = drop ALL + add back each)
-        if spec.capabilities is not None:
-            cmd.extend(["--cap-drop", "ALL"])
-            for cap in spec.capabilities:
-                cmd.extend(["--cap-add", cap])
+        # Devices
+        if spec.devices:
+            for device in spec.devices:
+                cmd.extend(["--device", device])
 
-        # Security: seccomp profile
-        if spec.seccomp_profile:
-            cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
+        # Security
+        if spec.privileged:
+            cmd.append("--privileged")
+        else:
+            # Capabilities (explicit set = drop ALL + add back each)
+            if spec.capabilities is not None:
+                cmd.extend(["--cap-drop", "ALL"])
+                for cap in spec.capabilities:
+                    cmd.extend(["--cap-add", cap])
+
+            # Seccomp profile
+            if spec.seccomp_profile:
+                cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
 
         # Image and command
         cmd.append(spec.image)
@@ -343,8 +458,11 @@ class DockerRuntime:
 
 def get_runtime(preference: str | None = None) -> ContainerRuntime:
     """Get available container runtime, with optional preference."""
-    runtimes: list[tuple[str, type[PodmanRuntime] | type[DockerRuntime]]] = [
+    runtimes: list[
+        tuple[str, type[PodmanRuntime] | type[PodmanKrunRuntime] | type[DockerRuntime]]
+    ] = [
         ("podman", PodmanRuntime),
+        ("podman-krun", PodmanKrunRuntime),
         ("docker", DockerRuntime),
     ]
 

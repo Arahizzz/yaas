@@ -37,8 +37,8 @@ delta = "latest"
 # "npm:@openai/codex" = "latest"
 # "npm:@google/gemini-cli" = "latest"
 
-# CLI for docker-in-docker via socket forwarding
-docker-cli = "latest"
+# Docker CLI for Docker-outside-Docker (host socket mount)
+# docker-cli = "latest"
 
 [settings]
 idiomatic_version_file_enable_tools = ["node", "python", "go", "php", "dotnet", "java", "ruby"] # https://mise.jdx.dev/configuration.html#idiomatic-version-files

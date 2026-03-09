@@ -5,12 +5,17 @@
 # See https://github.com/arahizzz/yaas for full documentation
 
 # Container runtime (auto-detected if omitted)
-# runtime = "podman"  # or "docker"
+# runtime = "podman"  # or "podman-krun" (libkrun MicroVM) or "docker"
+# Note: podman-krun runs containers inside lightweight KVM VMs via libkrun.
+# Some features are automatically disabled (see README for details).
 
 # Features (what to mount/forward into the sandbox)
 # ssh_agent = false
 # git_config = false
-# container_socket = false # Docker/Podman socket passthrough
+# podman = false            # Enable rootless Podman inside container (DinD)
+# podman_docker_socket = false  # Start Podman socket (Docker-compatible API)
+# devices = []             # Pass through host devices (e.g., ["/dev/fuse"])
+# mounts = ["/var/run/docker.sock"]  # Docker-outside-Docker (mount host socket)
 # clipboard = false        # Enable clipboard access for image pasting
 
 # Isolation
@@ -41,6 +46,9 @@
 # Global mounts (always applied)
 # mounts = ["~/data:/data:ro"]
 
+# Port publishing (host:container)
+# ports = ["8080:8080"]
+
 # Global environment variables (always applied)
 # true = forward from host, "value" = hardcoded
 # [env]
@@ -62,11 +70,14 @@
 # Tools can also override any container setting:
 #   ssh_agent = true
 #   git_config = true
-#   container_socket = false
+#   podman = true
+#   podman_docker_socket = false
+#   devices = ["/dev/fuse"]
 #   clipboard = false
 #   mount_project = false
 #   network_mode = "none"
 #   readonly_project = true
+#   runtime = "podman-krun"
 #   pid_mode = "host"
 #   [tools.<name>.resources]
 #   memory = "16g"
@@ -91,7 +102,7 @@ auto_upgrade_tools = false
 command = ["claude", "--append-system-prompt", "$YAAS_PREAMBLE"]
 yolo_flags = ["--dangerously-skip-permissions"]
 mounts = ["~/.claude", "~/.claude.json", "~/.claude/ide:ro"]
-env = { ANTHROPIC_API_KEY = true }
+env = { ANTHROPIC_API_KEY = true, IS_SANDBOX = "1" }
 
 # [tools.codex]
 # command = ["codex", "-c", "developer_instructions=$YAAS_PREAMBLE"]

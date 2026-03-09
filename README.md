@@ -2,6 +2,8 @@
 
 Run AI coding agents in sandboxed containers with proper UID passthrough.
 
+> **Note:** This is an experimental personal project in which I explore how to sandbox AI agents' capabilities in an ergonomic way. I am testing various features and designs while evaluating them on my real-life use cases. As such, I am currently not committing to API stability of any kind and you should expect adding/removal/reworking of features with future updates.
+
 ## Why YAAS?
 
 Container sandboxing for AI agents is nothing new, but most solutions have friction that makes them impractical for daily use.
@@ -243,18 +245,35 @@ yaas cleanup clones
 
 ## Configuration
 
-YAAS uses a two-level configuration system. Global settings go in `~/.config/yaas/config.toml`, and project-specific overrides go in `.yaas.toml` at your project root. Project config takes precedence.
+YAAS uses a layered configuration system with two config files and per-tool overrides:
+
+| Source | Location | Scope |
+|--------|----------|-------|
+| Global config | `~/.config/yaas/config.toml` | All projects |
+| Project config | `.yaas.toml` in project root | Current project |
+
+Both files share the same format and can contain both top-level settings and `[tools.*]` sections. Values merge with later sources taking precedence:
+
+1. **Global config** — defaults for all projects
+2. **Project config** — overrides global settings for this project
+3. **Per-tool overrides** — `[tools.*]` sections override default settings when running that tool
+4. **CLI flags** — `--runtime`, `--network`, `--memory`, etc. override everything
+
+Tool definitions also merge field-by-field: if the global config defines `[tools.claude]` with `mounts` and `yolo_flags`, and the project `.yaas.toml` only sets `[tools.claude] network_mode = "none"`, the mounts and yolo_flags are preserved.
 
 ### All Options
 
 ```toml
-# Container runtime: "podman" or "docker" (auto-detected if omitted)
+# Container runtime (auto-detected if omitted)
+# "podman", "podman-krun" (libkrun MicroVM), or "docker"
 runtime = "podman"
 
 # Feature flags
 ssh_agent = true           # Forward SSH agent socket
 git_config = true          # Mount .gitconfig and .config/git
-container_socket = false   # Mount docker/podman socket for docker-in-docker
+podman = false             # Enable rootless Podman inside container (DinD)
+podman_docker_socket = false  # Start Podman socket (Docker-compatible API)
+devices = []              # Pass through host devices (e.g., ["/dev/fuse"])
 clipboard = false          # Enable clipboard access for image pasting
 
 # Isolation
@@ -289,7 +308,7 @@ MY_VAR = "value"
 
 ### Tool Configuration
 
-Each tool can declare its own `mounts` and `env`. These are **only applied when running that specific tool** (e.g. `yaas claude`), not for `yaas run` or `yaas shell`.
+Each tool becomes a CLI command (`yaas claude`, `yaas codex`, etc.) and can declare its own `command`, `yolo_flags`, `mounts`, and `env`. Tool-specific mounts and env are **only applied when running that tool**, not for `yaas run` or `yaas shell`.
 
 ```toml
 [tools.claude]
@@ -315,6 +334,38 @@ env = { OPENAI_API_KEY = true }
 - `KEY = "value"` → set `KEY` to a hardcoded value
 
 **Variable expansion:** The entrypoint expands all `$ENV_VAR` references in command arguments via `envsubst`, so any environment variable can be referenced in tool commands (e.g. `$YAAS_PREAMBLE`).
+
+### Per-Tool Setting Overrides
+
+Tools can also override any container setting. This is useful when different tools need different isolation levels or runtimes:
+
+```toml
+[tools.claude]
+command = ["claude", "--append-system-prompt", "$YAAS_PREAMBLE"]
+yolo_flags = ["--dangerously-skip-permissions"]
+mounts = [".claude", ".claude.json", ".claude/ide:ro"]
+env = { ANTHROPIC_API_KEY = true }
+
+# Container setting overrides for this tool
+runtime = "podman-krun"       # Use MicroVM isolation
+ssh_agent = true
+git_config = true
+network_mode = "host"
+readonly_project = true
+pid_mode = "host"
+mount_project = false
+
+# Resource overrides (field-level merge with global)
+[tools.claude.resources]
+memory = "16g"
+cpus = 4.0
+
+# Security overrides (field-level merge with global)
+[tools.claude.security]
+capabilities = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID", "NET_RAW"]
+```
+
+Resource and security overrides merge at the field level — only the fields you specify are overridden, the rest inherit from the global/project config.
 
 ## Mise Integration
 
@@ -376,21 +427,37 @@ yaas cleanup volumes
 
 ### UID Passthrough (Linux)
 
-Traditional container sandboxes run processes as root or a fixed UID, which causes file permission problems when the container writes to mounted directories. On **Linux**, YAAS runs the container process with your actual UID/GID and creates a matching user inside the container at startup:
+Traditional container sandboxes run processes as root or a mismatched UID, which causes file permission problems when the container writes to mounted directories. YAAS handles this differently depending on the runtime:
+
+**Podman (rootless) / podman-krun:** The container process runs as "root" (UID 0) inside a user namespace, but this is **not real root** — the kernel maps container UID 0 to your host UID (e.g. 1000). The process has no access to the host's real root account and cannot escalate beyond your user's privileges. Files created in the container appear owned by your host user — no chown needed.
 
 ```
-Host (Linux)                      Container
+Host (UID 1000)                   Container (user namespace)
 ──────────────────────────────────────────────────────────────
---user 1000:1000 ─────────────────> Process runs as UID 1000
-                                    Entrypoint creates user "yaas" (1000:1000)
-
+Host UID 1000 ════════════════════> Container UID 0 (root)
 ~/projects/myapp ─────────────────> ~/projects/myapp (rw)
-                                    ↳ Files created with UID 1000 ✓
+                                    ↳ Created as UID 0 inside
+                                    ↳ Appears as UID 1000 on host ✓
 ```
 
-This means files created inside the container have correct ownership on the host. Config files like `.gitconfig` and `.claude` can be mounted directly instead of copied. Container sockets also work properly for docker-in-docker scenarios. Since the container's `/etc/passwd` is not bind-mounted from the host, you can freely `apt install` packages that need to create system users.
+**Docker (rootful):** The container starts as real root for setup, then `setpriv` drops to your host UID/GID at exec time. Volumes are chowned to your UID on first run.
 
-**Note:** On macOS, Docker Desktop handles file ownership through its file sharing layer (VirtioFS), so files created in containers should be owned by your macOS user without explicit UID passthrough.
+```
+Host (UID 1000)                   Container (no user namespace)
+──────────────────────────────────────────────────────────────
+YAAS_HOST_UID=1000 ───────────────> Entrypoint: chown volumes to 1000
+                                    setpriv drops to UID 1000 at exec
+~/projects/myapp ─────────────────> ~/projects/myapp (rw)
+                                    ↳ Created as UID 1000 ✓
+```
+
+**Docker (rootless):** Same as Podman — user namespace maps UID 0 to host UID. No privilege drop needed.
+
+**Docker (macOS):** Docker Desktop runs containers inside a Linux VM. File ownership is handled transparently by the file sharing layer (VirtioFS/gRPC-FUSE) — files created in containers appear owned by your macOS user regardless of the container UID. No UID passthrough or user namespace setup is needed.
+
+In all cases, config files like `.gitconfig` and `.claude` can be mounted directly instead of copied, and files created inside the container have correct ownership on the host. Since the container's `/etc/passwd` is not bind-mounted from the host, you can freely `dnf install` packages that need to create system users.
+
+For AI tools like Claude Code that check whether they're running as root, YAAS sets `IS_SANDBOX=1` in the tool's environment, which signals that root execution inside a sandbox is intentional.
 
 ### Persistent Volumes
 
@@ -400,6 +467,34 @@ YAAS uses named volumes to persist data across container sessions:
 - `yaas-nix` stores the Nix store and database (`/nix`)
 
 This is why tools installed via mise don't need to be reinstalled every time you start a new container. Running `yaas cleanup volumes` deletes these volumes, which will trigger a fresh tool installation on the next run.
+
+### Runtime Options
+
+YAAS supports multiple container runtimes:
+
+| Runtime | Isolation | Notes |
+|---------|-----------|-------|
+| `podman` | Rootless container (default) | Best compatibility, user namespace support |
+| `podman-krun` | libkrun MicroVM (KVM) | **Experimental.** Hardware-level isolation via lightweight VMs |
+| `docker` | Docker container | Fallback, uses sudo if needed |
+
+Set the runtime globally (`runtime = "podman-krun"`) or per-tool in config.
+
+#### podman-krun (MicroVM) — Experimental
+
+Uses [libkrun](https://github.com/containers/libkrun) to run containers inside lightweight KVM virtual machines. Requires the `crun-krun` package (provides the `krun` binary). This runtime is experimental — it works for daily use but has rough edges (see known limitations below).
+
+**What works differently from regular Podman:**
+- `sudo` and `apt install` work natively — no workarounds needed
+- File ownership on the host is correct (same as regular Podman)
+- YOLO mode works as expected
+- `--network host` is not supported — YAAS automatically falls back to bridge. Use port publishing (`-p`) to expose services
+- Clipboard, SSH agent, and container socket passthrough are automatically disabled (virtiofs can't forward host Unix sockets into the VM)
+- lxcfs is automatically disabled (not needed — the VM has its own `/proc`)
+
+**Known limitations:**
+- **vsock errors on Linux 6.12+.** libkrun may print `BufDescTooSmall` errors during network-heavy operations. Cosmetic for most workloads but may cause hangs for large transfers. [Upstream fix in progress.](https://github.com/containers/libkrun/issues/535)
+- Nix may show a cosmetic "no Internet access" warning on startup. Network connectivity works fine — YAAS configures Nix to ignore this check.
 
 ## Clipboard and Image Pasting
 
@@ -429,7 +524,7 @@ YAAS provides filesystem and resource isolation, but it intentionally mounts sen
 - **Tool mounts** (`mounts` in `[tools.*]`): Mounts tool-specific config dirs like `.claude`, `.codex`, `.gemini`. These may contain conversation history, cached credentials, or API keys. Only applied for the active tool.
 - **Git config** (`git_config`): Mounts `.gitconfig` which may include credentials or credential helpers.
 - **SSH agent** (`ssh_agent`): Forwards your SSH agent socket. The agent can use your SSH keys to authenticate to remote servers.
-- **Container socket** (`container_socket`): Mounts the Docker/Podman socket. This effectively gives the container root-equivalent access to your system.
+- **Podman DinD** (`podman`): Enables rootless Podman inside the container by adding `SYS_ADMIN` capability and `/dev/fuse` device. For Docker-outside-Docker, mount the host socket manually via `mounts = ["/var/run/docker.sock"]` — this gives root-equivalent access to your system.
 - **API keys** (`env` in `[tools.*]`): Keys like `ANTHROPIC_API_KEY` are forwarded only for the specific tool that declares them. No keys are forwarded for `yaas run` or `yaas shell` unless declared in the global `[env]`.
 
 The sandbox prevents the agent from accessing arbitrary files on your system, but anything you mount is fully accessible. If you're running untrusted code, consider disabling these options.

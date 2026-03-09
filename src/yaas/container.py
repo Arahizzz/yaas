@@ -18,7 +18,6 @@ from .constants import (
 )
 from .logging import get_logger
 from .platform import (
-    get_container_socket_paths,
     get_ssh_agent_socket,
     get_uid_gid,
     is_linux,
@@ -189,10 +188,49 @@ def build_container_spec(
     if config.preamble:
         environment["YAAS_PREAMBLE"] = _build_preamble(config, project_dir, mounts)
 
-    # Use real UID:GID. With --userns=keep-id, this maps correctly in rootless podman.
+    # Use real UID:GID. Runtimes pass as YAAS_HOST_UID/GID env vars for entrypoint.
     container_user = f"{uid}:{gid}"
 
     working_dir = str(project_dir) if project_dir else sandbox_home
+
+    # Collect ports (global + tool-specific)
+    ports = list(config.ports)
+    if config.active_tool:
+        tool = config.tools.get(config.active_tool)
+        if tool:
+            ports.extend(tool.ports)
+
+    # Collect devices (global + tool-specific)
+    devices = list(config.devices)
+    if config.active_tool:
+        tool = config.tools.get(config.active_tool)
+        if tool:
+            devices.extend(tool.devices)
+
+    # Resolve security (start from config, may be overridden by podman mode)
+    capabilities = list(config.security.capabilities) if config.security.capabilities else None
+    seccomp_profile = config.security.seccomp_profile
+    privileged = False
+
+    # Podman DinD: use --privileged for nested containers.
+    # Selective caps (SYS_ADMIN, MKNOD, etc.) are insufficient — nested container
+    # runtimes need the full capability set, unconfined seccomp, and device access.
+    podman_enabled = config.podman or config.podman_docker_socket
+    if podman_enabled:
+        privileged = True
+        if "/dev/fuse" not in devices:
+            devices.append("/dev/fuse")
+        # Overlay-on-overlay is denied by the kernel — inner container storage
+        # must live on a non-overlay filesystem. Named volume persists pulled images.
+        mounts.append(Mount(source="yaas-podman-data", target="/var/lib/containers", type="volume"))
+
+    # Podman: set env var for entrypoint to auto-install if needed
+    if podman_enabled:
+        environment["YAAS_PODMAN"] = "1"
+
+    # Podman docker socket: set env var for entrypoint to start podman service
+    if config.podman_docker_socket:
+        environment["YAAS_PODMAN_DOCKER_SOCKET"] = "1"
 
     return ContainerSpec(
         image=RUNTIME_IMAGE,
@@ -206,14 +244,17 @@ def build_container_spec(
         stdin_open=stdin_open,
         groups=groups or None,
         pid_mode=config.pid_mode,
+        ports=ports or None,
+        devices=devices or None,
         # Resource limits
         memory=config.resources.memory,
         memory_swap=config.resources.memory_swap,
         cpus=config.resources.cpus,
         pids_limit=config.resources.pids_limit,
         # Security
-        capabilities=config.security.capabilities,
-        seccomp_profile=config.security.seccomp_profile,
+        privileged=privileged,
+        capabilities=capabilities,
+        seccomp_profile=seccomp_profile,
     )
 
 
@@ -241,7 +282,8 @@ def build_clone_work_spec(
     # Prepend clone volume mount and override working dir / project env
     clone_mount = Mount(clone_volume, CLONE_WORKSPACE, type="volume")
     env = {**spec.environment, "PROJECT_PATH": working_dir}
-    return replace(spec, working_dir=working_dir, mounts=[clone_mount, *spec.mounts], environment=env)
+    mounts = [clone_mount, *spec.mounts]
+    return replace(spec, working_dir=working_dir, mounts=mounts, environment=env)
 
 
 def _add_worktree_mounts(
@@ -384,9 +426,6 @@ def _add_optional_mounts(
     if config.ssh_agent:
         _add_ssh_agent(mounts)
 
-    if config.container_socket:
-        _add_container_socket(mounts, groups)
-
     if config.clipboard:
         _add_clipboard_support(mounts)
 
@@ -406,26 +445,6 @@ def _add_ssh_agent(mounts: list[Mount]) -> None:
     if known_hosts.exists():
         mounts.append(Mount(str(known_hosts), "/etc/ssh/ssh_known_hosts", read_only=True))
 
-
-def _add_container_socket(mounts: list[Mount], groups: list[int]) -> None:
-    """Mount container runtime socket for docker-in-docker.
-
-    Uses platform-aware socket detection to support Docker Desktop and
-    Colima on macOS, in addition to standard Linux socket paths.
-    """
-    for sock_path in get_container_socket_paths():
-        if sock_path.exists():
-            # Mount at same path so docker/podman CLI works unchanged
-            mounts.append(Mount(str(sock_path), str(sock_path)))
-            # Add socket's group to supplementary groups for access
-            # Skip on macOS - GID from Docker Desktop VM isn't useful
-            if is_linux():
-                sock_gid = sock_path.stat().st_gid
-                if sock_gid not in groups:
-                    groups.append(sock_gid)
-            return
-
-    logger.warning("No container socket found, docker/podman won't work inside sandbox")
 
 
 def _add_clipboard_support(mounts: list[Mount]) -> None:
@@ -515,8 +534,16 @@ def _build_preamble(
         "Environment:",
     ]
 
+    # Runtime
+    if config.runtime:
+        lines.append(f"- Runtime: {config.runtime}")
+
     # Network
     lines.append(f"- Network: {config.network_mode}")
+
+    # Ports
+    if config.ports:
+        lines.append(f"- Published ports: {', '.join(config.ports)}")
 
     # Resource limits
     mem = config.resources.memory or "unlimited"
@@ -559,8 +586,8 @@ def _build_preamble(
     lines.append("Installing tools:")
     lines.append("- Use `nix run nixpkgs#<package>` for quick one-off tool invocations")
     lines.append("  when a tool is not already installed (100k+ packages available).")
-    lines.append("- Use `sudo apt-get install <package>` for system packages that cannot")
-    lines.append("  be run with Nix. APT packages are ephemeral and lost on container stop.")
+    lines.append("- Use `sudo dnf install <package>` for system packages that cannot")
+    lines.append("  be run with Nix. DNF packages are ephemeral and lost on container stop.")
     lines.append("- Use `mise use <tool>` to manage shared persistent tools (Node.js, Python,")
     lines.append("  Go, etc.). Mise tools persist across restarts. Consult with the user")
     lines.append("  before adding tools to mise, as it affects the shared tool configuration.")

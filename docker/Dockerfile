@@ -1,72 +1,60 @@
-FROM debian:bookworm-slim
+FROM fedora:42
 
-ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 # ============================================================
-# System packages (only things not available via mise)
+# 1. System packages (only things not available via mise)
 # ============================================================
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core build tools
-    build-essential make cmake pkg-config \
-    autoconf automake libtool \
-    coreutils bc \
-    # Essential development libraries
-    libssl-dev zlib1g-dev libxml2-dev libffi-dev \
-    # VCS and security
-    git git-lfs openssh-client gnupg ca-certificates \
+RUN dnf group install -y development-tools && dnf install -y \
+    # Extra build tools not in the group
+    cmake bc \
+    # Development libraries (not in the group)
+    openssl-devel zlib-devel libxml2-devel libffi-devel libatomic \
+    # VCS extras (git is in the group)
+    git-lfs openssh-clients gnupg2 \
     # Utilities
-    curl wget unzip zip xz-utils zstd gettext-base \
-    sudo less vim nano \
-    # Locale support (often needed)
-    locales icu-devtools \
+    curl wget unzip zip xz zstd \
+    sudo less vim-minimal nano \
     # Clipboard tools
     wl-clipboard xclip \
-    && rm -rf /var/lib/apt/lists/* \
+    # Podman DinD (baked in, no nix runtime install)
+    podman fuse-overlayfs \
+    && dnf clean all \
     && git lfs install
 
-
-# Allow passwordless sudo for all users
+# ============================================================
+# 2. sudo + PAM for privileged setup in entrypoint
+# ============================================================
 RUN echo "ALL ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd \
     && chmod 440 /etc/sudoers.d/nopasswd
 
-# Configure PAM for sudo to skip account validation (shadow entry not available
-# for dynamically created container user)
-RUN echo -e "auth sufficient pam_permit.so\naccount sufficient pam_permit.so\nsession sufficient pam_permit.so" > /etc/pam.d/sudo
-
 # ============================================================
-# Install mise (tool version manager)
+# 3. Tool managers: mise + nix (slow installs, cached aggressively)
 # ============================================================
 RUN curl -fsSL https://mise.run | sh \
     && mv /root/.local/bin/mise /usr/local/bin/mise
 
-# ============================================================
-# Install Nix (package manager for 100k+ packages via mise-nix)
-# ============================================================
 RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
     | sh -s -- install linux --init none --no-confirm
 
 # ============================================================
-# Environment setup
+# 4. Runtime environment
 # ============================================================
 ENV HOME=/home
 ENV MISE_DATA_DIR=/home/.local/share/mise
 ENV MISE_CACHE_DIR=/home/.cache/mise
 
-# ============================================================
-# Entrypoint
-# ============================================================
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-# Make /home writable by any UID (container runs as host user via --userns=keep-id)
+# Writable dirs for dynamic UID passthrough + XDG runtime dir
 RUN mkdir -p "$HOME/.local/bin" "$HOME/.local/share/mise" "$HOME/.cache" "$HOME/.config/mise" \
-    && chmod -R 777 /home
+    && chmod -R 777 /home \
+    && mkdir -p /run/user && chmod 1777 /run/user
 
-# Create /run/user for XDG_RUNTIME_DIR (entrypoint creates /run/user/$UID)
-RUN mkdir -p /run/user && chmod 1777 /run/user
+# ============================================================
+# 5. Entrypoint scripts (change most often — last for cache)
+# ============================================================
+COPY --chmod=755 entrypoint.sh entrypoint-podman.sh entrypoint-docker.sh entrypoint-krun.sh setup-podman.sh /opt/yaas/
 
 WORKDIR /workspace
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/opt/yaas/entrypoint.sh"]
 CMD ["bash"]
