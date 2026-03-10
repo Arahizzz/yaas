@@ -224,9 +224,7 @@ class TestPodmanKrunRuntime:
         """Test is_available when both podman and krun are present."""
         with ExitStack() as stack:
             stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
-            stack.enter_context(
-                mock_which({"podman": "/usr/bin/podman", "krun": "/usr/bin/krun"})
-            )
+            stack.enter_context(mock_which({"podman": "/usr/bin/podman", "krun": "/usr/bin/krun"}))
             runtime = PodmanKrunRuntime()
             assert runtime.is_available() is True
 
@@ -242,9 +240,7 @@ class TestPodmanKrunRuntime:
         """Test is_available on non-Linux platforms."""
         with ExitStack() as stack:
             stack.enter_context(patch("yaas.runtime.is_linux", return_value=False))
-            stack.enter_context(
-                mock_which({"podman": "/usr/bin/podman", "krun": "/usr/bin/krun"})
-            )
+            stack.enter_context(mock_which({"podman": "/usr/bin/podman", "krun": "/usr/bin/krun"}))
             runtime = PodmanKrunRuntime()
             assert runtime.is_available() is False
 
@@ -301,7 +297,6 @@ class TestPodmanKrunRuntime:
         config = make_config(security=SecuritySettings(capabilities=None))
         runtime.adjust_config(config)
         assert config.security.capabilities is None
-
 
 
 # ============================================================

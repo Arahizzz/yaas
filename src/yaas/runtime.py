@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from .config import Config
@@ -83,10 +84,35 @@ class ContainerSpec:
     # Devices
     devices: list[str] | None = None  # e.g., ["/dev/fuse"]
 
+    # Container name (for persistent containers)
+    name: str | None = None
+
+    # Entrypoint override (Docker semantics)
+    entrypoint: list[str] | None = None
+
+    # Use --init (tini/catatonit as PID 1)
+    init: bool = False
+
+    # Container labels
+    labels: dict[str, str] = field(default_factory=dict)
+
     # Security
     privileged: bool = False  # --privileged (all caps, no seccomp, all devices)
     capabilities: list[str] | None = None  # Exact cap set; triggers --cap-drop ALL + --cap-add each
     seccomp_profile: str | None = None  # path to seccomp JSON profile
+
+
+@dataclass
+class ExecSpec:
+    """Specification for exec-ing into a running container."""
+
+    container_name: str
+    command: list[str]
+    working_dir: str | None = None
+    user: str | None = None
+    environment: dict[str, str] = field(default_factory=dict)
+    tty: bool = True
+    stdin_open: bool = True
 
 
 class ContainerRuntime(Protocol):
@@ -113,6 +139,34 @@ class ContainerRuntime(Protocol):
 
     def remove_volume(self, name: str) -> bool:
         """Remove a named volume. Returns True on success."""
+        ...
+
+    def create_container(self, spec: ContainerSpec) -> bool:
+        """Create a container without starting it. Returns True on success."""
+        ...
+
+    def start_container(self, name: str) -> bool:
+        """Start a stopped container. Returns True on success."""
+        ...
+
+    def stop_container(self, name: str) -> bool:
+        """Stop a running container. Returns True on success."""
+        ...
+
+    def remove_container(self, name: str, force: bool = False) -> bool:
+        """Remove a container. Returns True on success."""
+        ...
+
+    def exec_container(self, spec: ExecSpec) -> int:
+        """Exec into a running container, return exit code."""
+        ...
+
+    def list_containers(self, prefix: str) -> list[dict[str, Any]]:
+        """List containers matching a name prefix."""
+        ...
+
+    def inspect_container(self, name: str) -> dict[str, Any] | None:
+        """Inspect a container. Returns None if not found."""
         ...
 
     def adjust_config(self, config: Config) -> None:
@@ -179,12 +233,11 @@ class PodmanRuntime:
             uid, gid = spec.user.split(":")
             cmd.extend(["-e", f"YAAS_HOST_UID={uid}", "-e", f"YAAS_HOST_GID={gid}"])
 
-    def _build_command(self, spec: ContainerSpec) -> list[str]:
-        cmd = [*self.command_prefix, "run", "--rm"]
-
+    def _build_common_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
+        """Append flags shared between run and create commands."""
         self._add_userns_flags(cmd, spec)
 
-        # Disable SELinux label confinement (needed for bind mounts: project dir, configs, sockets)
+        # Disable SELinux label confinement (needed for bind mounts)
         cmd.extend(["--security-opt", "label=disable"])
 
         # Interactive/TTY
@@ -194,6 +247,10 @@ class PodmanRuntime:
             cmd.append("-i")
 
         self._add_user_flags(cmd, spec)
+
+        # Container name
+        if spec.name:
+            cmd.extend(["--name", spec.name])
 
         # Working directory
         cmd.extend(["--workdir", spec.working_dir])
@@ -211,6 +268,18 @@ class PodmanRuntime:
         if spec.pid_mode:
             cmd.extend(["--pid", spec.pid_mode])
 
+        # Init (tini/catatonit as PID 1)
+        if spec.init:
+            cmd.append("--init")
+
+        # Labels
+        for key, value in spec.labels.items():
+            cmd.extend(["--label", f"{key}={value}"])
+
+        # Entrypoint override
+        if spec.entrypoint is not None:
+            cmd.extend(["--entrypoint", json.dumps(spec.entrypoint)])
+
         # Runtime identifier
         cmd.extend(["-e", f"YAAS_RUNTIME={self.name}"])
 
@@ -225,7 +294,6 @@ class PodmanRuntime:
         # Resource limits
         if spec.memory:
             cmd.extend(["--memory", spec.memory])
-            # If swap not specified, set to same as memory (disables swap)
             swap = spec.memory_swap or spec.memory
             cmd.extend(["--memory-swap", swap])
 
@@ -244,21 +312,124 @@ class PodmanRuntime:
         if spec.privileged:
             cmd.append("--privileged")
         else:
-            # Capabilities (explicit set = drop ALL + add back each)
             if spec.capabilities is not None:
                 cmd.extend(["--cap-drop", "ALL"])
                 for cap in spec.capabilities:
                     cmd.extend(["--cap-add", cap])
-
-            # Seccomp profile
             if spec.seccomp_profile:
                 cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
 
-        # Image and command
+    def _build_command(self, spec: ContainerSpec) -> list[str]:
+        cmd = [*self.command_prefix, "run", "--rm"]
+        self._build_common_flags(cmd, spec)
         cmd.append(spec.image)
         cmd.extend(spec.command)
-
         return cmd
+
+    def _build_create_command(self, spec: ContainerSpec) -> list[str]:
+        cmd = [*self.command_prefix, "create"]
+        self._build_common_flags(cmd, spec)
+        cmd.append(spec.image)
+        cmd.extend(spec.command)
+        return cmd
+
+    def _build_exec_command(self, spec: ExecSpec) -> list[str]:
+        cmd = [*self.command_prefix, "exec"]
+        if spec.tty:
+            cmd.append("-t")
+        if spec.stdin_open:
+            cmd.append("-i")
+        if spec.working_dir:
+            cmd.extend(["--workdir", spec.working_dir])
+        if spec.user:
+            cmd.extend(["--user", spec.user])
+        for key, value in spec.environment.items():
+            cmd.extend(["-e", f"{key}={value}"])
+        cmd.append(spec.container_name)
+        cmd.extend(spec.command)
+        return cmd
+
+    def create_container(self, spec: ContainerSpec) -> bool:
+        cmd = self._build_create_command(spec)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.debug(f"Failed to create container: {result.stderr}")
+        return result.returncode == 0
+
+    def start_container(self, name: str) -> bool:
+        result = subprocess.run(
+            [*self.command_prefix, "start", name], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            logger.debug(f"Failed to start container {name}: {result.stderr}")
+        return result.returncode == 0
+
+    def stop_container(self, name: str) -> bool:
+        result = subprocess.run(
+            [*self.command_prefix, "stop", name], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            logger.debug(f"Failed to stop container {name}: {result.stderr}")
+        return result.returncode == 0
+
+    def remove_container(self, name: str, force: bool = False) -> bool:
+        cmd = [*self.command_prefix, "rm"]
+        if force:
+            cmd.append("-f")
+        cmd.append(name)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.debug(f"Failed to remove container {name}: {result.stderr}")
+        return result.returncode == 0
+
+    def exec_container(self, spec: ExecSpec) -> int:
+        cmd = self._build_exec_command(spec)
+        result = subprocess.run(cmd)
+        return result.returncode
+
+    def list_containers(self, prefix: str) -> list[dict[str, Any]]:
+        result = subprocess.run(
+            [
+                *self.command_prefix,
+                "ps",
+                "-a",
+                "--filter",
+                f"name={prefix}",
+                "--format",
+                "json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return []
+        try:
+            # Podman outputs one JSON object per line; Docker outputs a JSON array
+            lines = result.stdout.strip().splitlines()
+            containers: list[dict[str, Any]] = []
+            for line in lines:
+                if line.strip():
+                    parsed = json.loads(line)
+                    if isinstance(parsed, list):
+                        containers.extend(parsed)
+                    else:
+                        containers.append(parsed)
+            return containers
+        except json.JSONDecodeError:
+            return []
+
+    def inspect_container(self, name: str) -> dict[str, Any] | None:
+        result = subprocess.run(
+            [*self.command_prefix, "inspect", name], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            return None
+        try:
+            data = json.loads(result.stdout)
+            result_data: dict[str, Any] = data[0] if isinstance(data, list) and data else data
+            return result_data
+        except json.JSONDecodeError:
+            return None
 
 
 class PodmanKrunRuntime(PodmanRuntime):
@@ -281,10 +452,10 @@ class PodmanKrunRuntime(PodmanRuntime):
     }
 
     def adjust_config(self, config: Config) -> None:
-        for field, description in self._INCOMPATIBLE_FEATURES.items():
-            if getattr(config, field):
+        for feat, description in self._INCOMPATIBLE_FEATURES.items():
+            if getattr(config, feat):
                 logger.warning(f"{description} is not supported with libkrun — disabling")
-                setattr(config, field, False)
+                setattr(config, feat, False)
         if config.network_mode == "host":
             logger.warning("--network host is not supported with libkrun — falling back to bridge")
             config.network_mode = "bridge"
@@ -292,17 +463,27 @@ class PodmanKrunRuntime(PodmanRuntime):
             logger.warning("capability restrictions are not supported with libkrun — disabling")
             config.security.capabilities = None
 
-    def _build_command(self, spec: ContainerSpec) -> list[str]:
-        cmd = super()._build_command(spec)
+    def _inject_krun_flags(self, cmd: list[str], spec: ContainerSpec) -> list[str]:
+        """Insert krun-specific flags before the image argument."""
         image_idx = cmd.index(spec.image)
         krun_flags: list[str] = [
-            # krun's getifaddrs() returns no interfaces, making Nix think it's
-            # offline and disabling parallel substitutions. Force substituters on.
-            "-e", "NIX_CONFIG=substitute = true",
+            "-e",
+            "NIX_CONFIG=substitute = true",
             "--annotation=run.oci.handler=krun",
         ]
         cmd[image_idx:image_idx] = krun_flags
+        # Strip --init (VM has its own init)
+        if "--init" in cmd:
+            cmd.remove("--init")
         return cmd
+
+    def _build_command(self, spec: ContainerSpec) -> list[str]:
+        cmd = super()._build_command(spec)
+        return self._inject_krun_flags(cmd, spec)
+
+    def _build_create_command(self, spec: ContainerSpec) -> list[str]:
+        cmd = super()._build_create_command(spec)
+        return self._inject_krun_flags(cmd, spec)
 
 
 class DockerRuntime:
@@ -374,21 +555,24 @@ class DockerRuntime:
     def adjust_config(self, config: Config) -> None:
         pass
 
-    def _build_command(self, spec: ContainerSpec) -> list[str]:
-        cmd = [*self.command_prefix, "run", "--rm"]
-
+    def _build_common_flags(self, cmd: list[str], spec: ContainerSpec) -> None:
+        """Append flags shared between run and create commands."""
         # Interactive/TTY
         if spec.tty:
             cmd.append("-t")
         if spec.stdin_open:
             cmd.append("-i")
 
-        # User identity: pass host UID/GID for entrypoint setup (chown, user creation).
+        # User identity
         if spec.user:
             uid, gid = spec.user.split(":")
             cmd.extend(["-e", f"YAAS_HOST_UID={uid}", "-e", f"YAAS_HOST_GID={gid}"])
         if not self._is_rootless():
             cmd.extend(["-e", "YAAS_DOCKER_ROOTFUL=1"])
+
+        # Container name
+        if spec.name:
+            cmd.extend(["--name", spec.name])
 
         # Working directory
         cmd.extend(["--workdir", spec.working_dir])
@@ -406,6 +590,18 @@ class DockerRuntime:
         if spec.pid_mode:
             cmd.extend(["--pid", spec.pid_mode])
 
+        # Init
+        if spec.init:
+            cmd.append("--init")
+
+        # Labels
+        for key, value in spec.labels.items():
+            cmd.extend(["--label", f"{key}={value}"])
+
+        # Entrypoint override
+        if spec.entrypoint is not None:
+            cmd.extend(["--entrypoint", json.dumps(spec.entrypoint)])
+
         # Runtime identifier
         cmd.extend(["-e", f"YAAS_RUNTIME={self.name}"])
 
@@ -420,7 +616,6 @@ class DockerRuntime:
         # Resource limits
         if spec.memory:
             cmd.extend(["--memory", spec.memory])
-            # If swap not specified, set to same as memory (disables swap)
             swap = spec.memory_swap or spec.memory
             cmd.extend(["--memory-swap", swap])
 
@@ -439,21 +634,123 @@ class DockerRuntime:
         if spec.privileged:
             cmd.append("--privileged")
         else:
-            # Capabilities (explicit set = drop ALL + add back each)
             if spec.capabilities is not None:
                 cmd.extend(["--cap-drop", "ALL"])
                 for cap in spec.capabilities:
                     cmd.extend(["--cap-add", cap])
-
-            # Seccomp profile
             if spec.seccomp_profile:
                 cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
 
-        # Image and command
+    def _build_command(self, spec: ContainerSpec) -> list[str]:
+        cmd = [*self.command_prefix, "run", "--rm"]
+        self._build_common_flags(cmd, spec)
         cmd.append(spec.image)
         cmd.extend(spec.command)
-
         return cmd
+
+    def _build_create_command(self, spec: ContainerSpec) -> list[str]:
+        cmd = [*self.command_prefix, "create"]
+        self._build_common_flags(cmd, spec)
+        cmd.append(spec.image)
+        cmd.extend(spec.command)
+        return cmd
+
+    def _build_exec_command(self, spec: ExecSpec) -> list[str]:
+        cmd = [*self.command_prefix, "exec"]
+        if spec.tty:
+            cmd.append("-t")
+        if spec.stdin_open:
+            cmd.append("-i")
+        if spec.working_dir:
+            cmd.extend(["--workdir", spec.working_dir])
+        if spec.user:
+            cmd.extend(["--user", spec.user])
+        for key, value in spec.environment.items():
+            cmd.extend(["-e", f"{key}={value}"])
+        cmd.append(spec.container_name)
+        cmd.extend(spec.command)
+        return cmd
+
+    def create_container(self, spec: ContainerSpec) -> bool:
+        cmd = self._build_create_command(spec)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.debug(f"Failed to create container: {result.stderr}")
+        return result.returncode == 0
+
+    def start_container(self, name: str) -> bool:
+        result = subprocess.run(
+            [*self.command_prefix, "start", name], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            logger.debug(f"Failed to start container {name}: {result.stderr}")
+        return result.returncode == 0
+
+    def stop_container(self, name: str) -> bool:
+        result = subprocess.run(
+            [*self.command_prefix, "stop", name], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            logger.debug(f"Failed to stop container {name}: {result.stderr}")
+        return result.returncode == 0
+
+    def remove_container(self, name: str, force: bool = False) -> bool:
+        cmd = [*self.command_prefix, "rm"]
+        if force:
+            cmd.append("-f")
+        cmd.append(name)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.debug(f"Failed to remove container {name}: {result.stderr}")
+        return result.returncode == 0
+
+    def exec_container(self, spec: ExecSpec) -> int:
+        cmd = self._build_exec_command(spec)
+        result = subprocess.run(cmd)
+        return result.returncode
+
+    def list_containers(self, prefix: str) -> list[dict[str, Any]]:
+        result = subprocess.run(
+            [
+                *self.command_prefix,
+                "ps",
+                "-a",
+                "--filter",
+                f"name={prefix}",
+                "--format",
+                "json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return []
+        try:
+            lines = result.stdout.strip().splitlines()
+            containers: list[dict[str, Any]] = []
+            for line in lines:
+                if line.strip():
+                    parsed = json.loads(line)
+                    if isinstance(parsed, list):
+                        containers.extend(parsed)
+                    else:
+                        containers.append(parsed)
+            return containers
+        except json.JSONDecodeError:
+            return []
+
+    def inspect_container(self, name: str) -> dict[str, Any] | None:
+        result = subprocess.run(
+            [*self.command_prefix, "inspect", name], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            return None
+        try:
+            data = json.loads(result.stdout)
+            result_data: dict[str, Any] = data[0] if isinstance(data, list) and data else data
+            return result_data
+        except json.JSONDecodeError:
+            return None
 
 
 def get_runtime(preference: str | None = None) -> ContainerRuntime:
