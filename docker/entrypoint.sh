@@ -110,6 +110,11 @@ fi
 # Activate mise — adds shims to PATH and loads env vars from [env] section
 eval "$(mise activate bash)"
 
+# Box containers: install all configured tools on startup (idempotent, fast if already installed)
+if [[ "${YAAS_BOX:-}" == "1" ]]; then
+    mise install || true
+fi
+
 # ============================================================
 # Podman DinD setup (if requested)
 # ============================================================

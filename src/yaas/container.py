@@ -81,6 +81,7 @@ def build_box_spec(
 
     # Build environment
     environment = _build_environment(config, effective_project_dir, sandbox_home)
+    environment["YAAS_BOX"] = "1"
 
     container_user = f"{uid}:{gid}"
     working_dir = str(effective_project_dir) if effective_project_dir else sandbox_home
