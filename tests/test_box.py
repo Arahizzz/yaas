@@ -383,7 +383,7 @@ class TestPodmanCreateCommand:
 
     def test_create_has_no_rm(self) -> None:
         """Create command should NOT have --rm."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = ContainerSpec(
                 image="test:latest",
@@ -409,7 +409,7 @@ class TestPodmanCreateCommand:
         assert cmd[name_idx + 1] == "yaas-box-test"
 
     def test_create_with_labels(self) -> None:
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = ContainerSpec(
                 image="test:latest",
@@ -430,7 +430,7 @@ class TestPodmanCreateCommand:
         assert cmd[label_idx + 1] == "yaas.box.spec=shell"
 
     def test_create_with_entrypoint(self) -> None:
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = ContainerSpec(
                 image="test:latest",
@@ -453,7 +453,7 @@ class TestPodmanExecCommand:
     """Tests for PodmanRuntime._build_exec_command."""
 
     def test_basic_exec(self) -> None:
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = ExecSpec(
                 container_name="yaas-box-test",
@@ -471,7 +471,7 @@ class TestPodmanExecCommand:
         assert "bash" in cmd
 
     def test_exec_with_workdir(self) -> None:
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = ExecSpec(
                 container_name="yaas-box-test",
@@ -484,7 +484,7 @@ class TestPodmanExecCommand:
         assert "/workspace" in cmd
 
     def test_exec_with_env(self) -> None:
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = ExecSpec(
                 container_name="test",
@@ -497,7 +497,7 @@ class TestPodmanExecCommand:
         assert "FOO=bar" in cmd
 
     def test_exec_no_tty(self) -> None:
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = ExecSpec(
                 container_name="test",
@@ -520,7 +520,7 @@ class TestRunCommandRegression:
     """Ensure refactored _build_command still produces correct output."""
 
     def test_run_has_rm(self) -> None:
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = ContainerSpec(
                 image="test:latest",
@@ -539,7 +539,7 @@ class TestRunCommandRegression:
         assert "--rm" in cmd
 
     def test_run_no_init_by_default(self) -> None:
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = ContainerSpec(
                 image="test:latest",
@@ -568,7 +568,7 @@ class TestKrunStipsInit:
     def test_create_strips_init(self) -> None:
         from yaas.runtime import PodmanKrunRuntime
 
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
             spec = ContainerSpec(
                 image="test:latest",

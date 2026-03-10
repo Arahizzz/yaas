@@ -36,7 +36,7 @@ def _mock_platform(
         stack.enter_context(patch("yaas.container.is_linux", return_value=is_linux))
         stack.enter_context(patch("yaas.container.is_macos", return_value=is_macos))
         stack.enter_context(patch("yaas.container.get_uid_gid", return_value=(uid, gid)))
-        stack.enter_context(patch("yaas.runtime.is_linux", return_value=is_linux))
+        stack.enter_context(patch("yaas.runtime.podman.is_linux", return_value=is_linux))
         yield
 
 

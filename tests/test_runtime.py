@@ -54,7 +54,7 @@ class TestPodmanRuntime:
 
     def test_build_command(self) -> None:
         """Test PodmanRuntime command building."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = make_spec(
                 command=["echo", "hello"],
@@ -85,7 +85,7 @@ class TestPodmanRuntime:
 
     def test_injects_yaas_runtime_env(self) -> None:
         """Test PodmanRuntime injects YAAS_RUNTIME=podman."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = make_spec()
             cmd = runtime._build_command(spec)
@@ -96,14 +96,14 @@ class TestPodmanRuntime:
 
     def test_command_prefix(self) -> None:
         """Test PodmanRuntime command_prefix returns podman."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             assert runtime.command_prefix == ["podman"]
 
     def test_not_available_on_non_linux(self) -> None:
         """Test PodmanRuntime is not available on non-Linux platforms."""
         with ExitStack() as stack:
-            stack.enter_context(patch("yaas.runtime.is_linux", return_value=False))
+            stack.enter_context(patch("yaas.runtime.podman.is_linux", return_value=False))
             stack.enter_context(mock_which({"podman": "/usr/local/bin/podman"}))
             runtime = PodmanRuntime()
             assert runtime.is_available() is False
@@ -111,7 +111,7 @@ class TestPodmanRuntime:
     def test_create_volume_success(self) -> None:
         """Test create_volume returns True on success."""
         with ExitStack() as stack:
-            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            stack.enter_context(patch("yaas.runtime.podman.is_linux", return_value=True))
             mock_run = stack.enter_context(patch("subprocess.run"))
             mock_run.return_value = MagicMock(returncode=0)
 
@@ -126,7 +126,7 @@ class TestPodmanRuntime:
     def test_create_volume_failure(self) -> None:
         """Test create_volume returns False on failure."""
         with ExitStack() as stack:
-            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            stack.enter_context(patch("yaas.runtime.podman.is_linux", return_value=True))
             mock_run = stack.enter_context(patch("subprocess.run"))
             mock_run.return_value = MagicMock(returncode=1, stderr="error message")
 
@@ -138,7 +138,7 @@ class TestPodmanRuntime:
     def test_remove_volume_success(self) -> None:
         """Test remove_volume returns True on success."""
         with ExitStack() as stack:
-            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            stack.enter_context(patch("yaas.runtime.podman.is_linux", return_value=True))
             mock_run = stack.enter_context(patch("subprocess.run"))
             mock_run.return_value = MagicMock(returncode=0)
 
@@ -152,7 +152,7 @@ class TestPodmanRuntime:
     def test_remove_volume_failure(self) -> None:
         """Test remove_volume returns False on failure."""
         with ExitStack() as stack:
-            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            stack.enter_context(patch("yaas.runtime.podman.is_linux", return_value=True))
             mock_run = stack.enter_context(patch("subprocess.run"))
             mock_run.return_value = MagicMock(returncode=1, stderr="error message")
 
@@ -172,7 +172,7 @@ class TestPodmanKrunRuntime:
 
     def test_build_command_has_annotation(self) -> None:
         """Test that krun annotation is added before image name."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
             spec = make_spec(command=["echo", "hello"])
             cmd = runtime._build_command(spec)
@@ -185,7 +185,7 @@ class TestPodmanKrunRuntime:
 
     def test_omits_userns_and_user_flags(self) -> None:
         """Test that krun omits --userns and --user (VM boots as root)."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
             spec = make_spec()
             cmd = runtime._build_command(spec)
@@ -196,7 +196,7 @@ class TestPodmanKrunRuntime:
 
     def test_passes_runtime_and_host_uid_env_vars(self) -> None:
         """Test that krun injects YAAS_RUNTIME and YAAS_HOST_UID/GID."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
             spec = make_spec(user="1000:1000")
             cmd = runtime._build_command(spec)
@@ -211,7 +211,7 @@ class TestPodmanKrunRuntime:
 
     def test_forces_nix_substituters(self) -> None:
         """Test that krun injects NIX_CONFIG to force substituters online."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
             spec = make_spec()
             cmd = runtime._build_command(spec)
@@ -223,7 +223,7 @@ class TestPodmanKrunRuntime:
     def test_available_with_krun(self) -> None:
         """Test is_available when both podman and krun are present."""
         with ExitStack() as stack:
-            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            stack.enter_context(patch("yaas.runtime.podman.is_linux", return_value=True))
             stack.enter_context(mock_which({"podman": "/usr/bin/podman", "krun": "/usr/bin/krun"}))
             runtime = PodmanKrunRuntime()
             assert runtime.is_available() is True
@@ -231,7 +231,7 @@ class TestPodmanKrunRuntime:
     def test_not_available_without_krun(self) -> None:
         """Test is_available when krun binary is missing."""
         with ExitStack() as stack:
-            stack.enter_context(patch("yaas.runtime.is_linux", return_value=True))
+            stack.enter_context(patch("yaas.runtime.podman.is_linux", return_value=True))
             stack.enter_context(mock_which({"podman": "/usr/bin/podman", "krun": None}))
             runtime = PodmanKrunRuntime()
             assert runtime.is_available() is False
@@ -239,14 +239,14 @@ class TestPodmanKrunRuntime:
     def test_not_available_on_non_linux(self) -> None:
         """Test is_available on non-Linux platforms."""
         with ExitStack() as stack:
-            stack.enter_context(patch("yaas.runtime.is_linux", return_value=False))
+            stack.enter_context(patch("yaas.runtime.podman.is_linux", return_value=False))
             stack.enter_context(mock_which({"podman": "/usr/bin/podman", "krun": "/usr/bin/krun"}))
             runtime = PodmanKrunRuntime()
             assert runtime.is_available() is False
 
     def test_adjust_config_disables_lxcfs(self) -> None:
         """Test that adjust_config disables lxcfs for MicroVM compatibility."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
         config = make_config(lxcfs=True)
         runtime.adjust_config(config)
@@ -254,7 +254,7 @@ class TestPodmanKrunRuntime:
 
     def test_adjust_config_noop_when_lxcfs_disabled(self) -> None:
         """Test that adjust_config is a no-op when lxcfs is already disabled."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
         config = make_config(lxcfs=False)
         runtime.adjust_config(config)
@@ -262,7 +262,7 @@ class TestPodmanKrunRuntime:
 
     def test_adjust_config_disables_network_host(self) -> None:
         """Test that adjust_config falls back from host to bridge networking."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
         config = make_config(network_mode="host")
         runtime.adjust_config(config)
@@ -270,7 +270,7 @@ class TestPodmanKrunRuntime:
 
     def test_adjust_config_preserves_bridge_network(self) -> None:
         """Test that adjust_config leaves bridge networking unchanged."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
         config = make_config(network_mode="bridge")
         runtime.adjust_config(config)
@@ -280,7 +280,7 @@ class TestPodmanKrunRuntime:
         """Test that adjust_config clears capability restrictions for MicroVM."""
         from yaas.config import SecuritySettings
 
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
         config = make_config(
             security=SecuritySettings(capabilities=["CHOWN", "DAC_OVERRIDE"]),
@@ -292,7 +292,7 @@ class TestPodmanKrunRuntime:
         """Test that adjust_config is a no-op when capabilities are already None."""
         from yaas.config import SecuritySettings
 
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
         config = make_config(security=SecuritySettings(capabilities=None))
         runtime.adjust_config(config)
@@ -472,7 +472,7 @@ class TestSecurityFlags:
 
     def test_podman_capabilities(self) -> None:
         """Test Podman generates --cap-drop ALL and --cap-add flags from capabilities list."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = make_spec(capabilities=["CHOWN", "KILL"])
             cmd = runtime._build_command(spec)
@@ -502,7 +502,7 @@ class TestSecurityFlags:
 
     def test_no_cap_flags_when_none(self) -> None:
         """Test that no cap flags are generated when fields are None."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = make_spec()
             cmd = runtime._build_command(spec)
@@ -512,7 +512,7 @@ class TestSecurityFlags:
 
     def test_podman_seccomp_profile(self) -> None:
         """Test Podman generates --security-opt seccomp= flag."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = make_spec(seccomp_profile="/path/to/profile.json")
             cmd = runtime._build_command(spec)
@@ -545,7 +545,7 @@ class TestSecurityFlags:
 
     def test_no_seccomp_flag_when_none(self) -> None:
         """Test that no seccomp flag is generated when profile is None."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = make_spec()
             cmd = runtime._build_command(spec)
@@ -568,7 +568,7 @@ class TestPortPublishing:
 
     def test_podman_ports(self) -> None:
         """Test Podman generates -p flags from ports list."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = make_spec(ports=["8080:8080", "3000:3000"])
             cmd = runtime._build_command(spec)
@@ -591,7 +591,7 @@ class TestPortPublishing:
 
     def test_no_port_flags_when_none(self) -> None:
         """Test that no port flags are generated when ports is None."""
-        with patch("yaas.runtime.is_linux", return_value=True):
+        with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = make_spec()
             cmd = runtime._build_command(spec)

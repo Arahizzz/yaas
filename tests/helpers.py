@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -43,18 +43,28 @@ not_windows = pytest.mark.skipif(
 @contextmanager
 def mock_docker_socket(accessible: bool = True) -> Generator[None, None, None]:
     """Mock Docker socket accessibility."""
-    with patch("yaas.runtime._can_access_docker_socket", return_value=accessible):
+    with patch("yaas.runtime.docker._can_access_docker_socket", return_value=accessible):
         yield
 
 
 @contextmanager
 def mock_which(commands: dict[str, str | None]) -> Generator[None, None, None]:
-    """Mock shutil.which for specific commands."""
+    """Mock shutil.which for specific commands.
+
+    Patches shutil.which in all runtime submodules (podman, docker, krun).
+    """
 
     def which_side_effect(cmd: str) -> str | None:
         return commands.get(cmd)
 
-    with patch("yaas.runtime.shutil.which", side_effect=which_side_effect):
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("yaas.runtime.podman.shutil.which", side_effect=which_side_effect)
+        )
+        stack.enter_context(
+            patch("yaas.runtime.docker.shutil.which", side_effect=which_side_effect)
+        )
+        stack.enter_context(patch("yaas.runtime.krun.shutil.which", side_effect=which_side_effect))
         yield
 
 
