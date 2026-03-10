@@ -34,7 +34,7 @@ from .container import (
 )
 from .logging import get_logger, setup_logging
 from .platform import PlatformError, check_platform_support
-from .runtime import ContainerRuntime, ExecSpec, get_runtime
+from .runtime import ContainerRuntime, ContainerSpec, ExecSpec, get_runtime
 from .startup_ui import (
     is_interactive,
     print_startup_footer,
@@ -294,6 +294,87 @@ for _tool_name, _tool_config in _tools.items():
     _create_tool_command(_tool_name, _tool_config)
 
 
+def _print_container_spec(spec: ContainerSpec) -> None:
+    """Print a resolved ContainerSpec as Rich-formatted output."""
+    console.print(f"[bold]Image:[/] {spec.image}")
+    if spec.name:
+        console.print(f"[bold]Container:[/] {spec.name}")
+    if spec.entrypoint:
+        console.print(f"[bold]Entrypoint:[/] {' '.join(spec.entrypoint)}")
+    if spec.command:
+        console.print(f"[bold]Command:[/] {' '.join(spec.command)}")
+    console.print(f"[bold]Working dir:[/] {spec.working_dir}")
+    console.print(f"[bold]User:[/] {spec.user}")
+    console.print(f"[bold]Network:[/] {spec.network_mode or 'default'}")
+    if spec.init:
+        console.print(f"[bold]Init:[/] {spec.init}")
+    if spec.pid_mode:
+        console.print(f"[bold]PID mode:[/] {spec.pid_mode}")
+    console.print(f"[bold]TTY:[/] {spec.tty}")
+    console.print(f"[bold]Stdin:[/] {spec.stdin_open}")
+
+    if spec.environment:
+        env_table = Table(title="Environment", show_header=False)
+        env_table.add_column("Key", style="bold", no_wrap=True)
+        env_table.add_column("Value")
+        for k, v in sorted(spec.environment.items()):
+            env_table.add_row(k, v)
+        console.print()
+        console.print(env_table)
+
+    if spec.mounts:
+        mount_table = Table(title="Mounts")
+        mount_table.add_column("Type", style="bold")
+        mount_table.add_column("Source")
+        mount_table.add_column("Target")
+        mount_table.add_column("RO")
+        for m in spec.mounts:
+            source = m.source if m.type != "tmpfs" else ""
+            mount_table.add_row(m.type, source, m.target, "yes" if m.read_only else "")
+        console.print()
+        console.print(mount_table)
+
+    if spec.ports:
+        console.print("\n[bold]Ports:[/]")
+        for p in spec.ports:
+            console.print(f"  {p}")
+
+    if spec.devices:
+        console.print("\n[bold]Devices:[/]")
+        for d in spec.devices:
+            console.print(f"  {d}")
+
+    has_resources = spec.memory or spec.cpus or spec.pids_limit
+    if has_resources:
+        console.print("\n[bold]Resources:[/]")
+        if spec.memory:
+            console.print(f"  memory: {spec.memory}")
+            if spec.memory_swap:
+                console.print(f"  memory_swap: {spec.memory_swap}")
+        if spec.cpus:
+            console.print(f"  cpus: {spec.cpus}")
+        if spec.pids_limit:
+            console.print(f"  pids_limit: {spec.pids_limit}")
+
+    has_security = spec.privileged or spec.capabilities or spec.seccomp_profile
+    if has_security:
+        console.print("\n[bold]Security:[/]")
+        if spec.privileged:
+            console.print("  privileged: true")
+        if spec.capabilities:
+            console.print(f"  capabilities: {', '.join(spec.capabilities)}")
+        if spec.seccomp_profile:
+            console.print(f"  seccomp_profile: {spec.seccomp_profile}")
+
+    if spec.labels:
+        console.print("\n[bold]Labels:[/]")
+        for k, v in sorted(spec.labels.items()):
+            console.print(f"  {k}: {v}")
+
+    if spec.groups:
+        console.print(f"\n[bold]Groups:[/] {', '.join(str(g) for g in spec.groups)}")
+
+
 # --- Box helpers ---
 
 
@@ -340,6 +421,9 @@ def box_create(
     env: list[str] | None = typer.Option(None, "--env", "-e", help="Ad-hoc env (KEY=VALUE or KEY)"),
     base: str | None = typer.Option(None, "--base", help="Config base: default, minimal, none"),
     runtime_opt: RuntimeChoice | None = typer.Option(None, "--runtime", help="Container runtime"),
+    quadlet: bool = typer.Option(
+        False, "--quadlet", help="Print Podman quadlet .container file to stdout"
+    ),
 ) -> None:
     """Create a persistent box container."""
     project_dir = Path.cwd()
@@ -378,13 +462,47 @@ def box_create(
 
     container_name = _box_container_name(name)
 
+    # Build container spec
+    container_spec = build_box_spec(config, effective_spec, container_name)
+
+    if quadlet:
+        if runtime.name != "podman":
+            console.print("[red]Quadlet output is only supported with Podman runtime[/]")
+            raise typer.Exit(1)
+
+        # Inject runtime env vars normally added by PodmanRuntime
+        uid, gid = container_spec.user.split(":")
+        container_spec.environment["YAAS_HOST_UID"] = uid
+        container_spec.environment["YAAS_HOST_GID"] = gid
+        container_spec.environment["YAAS_RUNTIME"] = "podman"
+
+        from .quadlet import generate_quadlet
+
+        print(generate_quadlet(container_spec))
+        import sys
+
+        err = Console(file=sys.stderr)
+        err.print(
+            f"\n[dim]Put this file in:"
+            f"\n  ~/.config/containers/systemd/{container_name}.container (rootless)"
+            f"\n  /etc/containers/systemd/{container_name}.container (rootful)"
+            f"\nThen run:"
+            f"\n  systemctl --user daemon-reload && systemctl --user start {container_name}"
+            f"\n  systemctl daemon-reload && systemctl start {container_name}  (rootful)"
+            f"\nManage with:"
+            f"\n  yaas box enter {name} / yaas box exec {name} -- <cmd>"
+            f"\n  systemctl [--user] stop/start/restart {container_name}"
+            f"\n  https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html[/]",
+        )
+        return
+
+    # Mark as YAAS-managed (quadlet containers won't have this label)
+    container_spec.labels["yaas.box.managed"] = "true"
+
     # Pull image if enabled
     if config.auto_pull_image:
         print_step("Pulling image")
         _pull_image(runtime)
-
-    # Build and create container
-    container_spec = build_box_spec(config, effective_spec, container_name)
 
     print_step(f"Creating box '{name}'")
     if not runtime.create_container(container_spec):
@@ -398,6 +516,72 @@ def box_create(
 
     console.print(f"[green]Box '{name}' created and running.[/]")
     console.print(f"[dim]Enter with: yaas box enter {name}[/]")
+
+
+@box_app.command(name="config")
+def box_config(
+    name: str = typer.Argument(
+        ..., help="Box spec from config", autocompletion=complete_box
+    ),
+    ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
+    git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
+    podman: bool = typer.Option(False, "--podman", help="Enable rootless Podman inside container"),
+    podman_docker_socket: bool = typer.Option(
+        False, "--podman-docker-socket", help="Start Podman socket (Docker-compatible API)"
+    ),
+    clipboard: bool = typer.Option(
+        False, "--clipboard", help="Enable clipboard access for image pasting"
+    ),
+    network: NetworkMode | None = typer.Option(None, "--network", help="Network mode"),
+    memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
+    cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
+    mount: list[str] | None = typer.Option(None, "--mount", "-v", help="Ad-hoc mount (mount spec)"),
+    port: list[str] | None = typer.Option(
+        None, "--port", "-p", help="Publish port (host:container)"
+    ),
+    device: list[str] | None = typer.Option(
+        None, "--device", help="Pass through host device (e.g., /dev/fuse)"
+    ),
+    env: list[str] | None = typer.Option(None, "--env", "-e", help="Ad-hoc env (KEY=VALUE or KEY)"),
+    base: str | None = typer.Option(None, "--base", help="Config base: default, minimal, none"),
+    runtime_opt: RuntimeChoice | None = typer.Option(None, "--runtime", help="Container runtime"),
+) -> None:
+    """Show resolved container spec for a box."""
+    project_dir = Path.cwd()
+    config = load_config(project_dir)
+
+    effective_spec = name
+    if effective_spec not in config.boxes:
+        config.boxes[effective_spec] = BoxSpec()
+
+    box_spec = config.boxes[effective_spec]
+    if base is not None:
+        box_spec.base = base
+    _apply_cli_flags(
+        box_spec,
+        config,
+        ssh_agent=ssh_agent,
+        git_config=git_config,
+        podman=podman,
+        podman_docker_socket=podman_docker_socket,
+        clipboard=clipboard,
+        network=network,
+        memory=memory,
+        cpus=cpus,
+        runtime=runtime_opt,
+        mounts=mount,
+        ports=port,
+        devices=device,
+        envs=env,
+    )
+
+    runtime = get_runtime(config.runtime)
+    config.runtime = runtime.name
+    runtime.adjust_config(config)
+
+    container_name = _box_container_name(effective_spec)
+    container_spec = build_box_spec(config, effective_spec, container_name)
+    _print_container_spec(container_spec)
 
 
 @box_app.command(name="enter")
@@ -519,7 +703,7 @@ def box_remove(
 def box_list() -> None:
     """List all boxes."""
     runtime = get_runtime()
-    containers = runtime.list_containers(BOX_CONTAINER_PREFIX)
+    containers = runtime.list_containers(labels={"yaas.box.managed": "true"})
 
     if not containers:
         console.print("[dim]No boxes found.[/]")
@@ -592,10 +776,26 @@ def box_info(
 
 
 @app.command()
-def config_cmd() -> None:
-    """Show current configuration."""
+def config_cmd(
+    tool: str | None = typer.Argument(None, help="Tool name to show resolved container spec for"),
+) -> None:
+    """Show current configuration, or resolved container spec for a tool."""
     project_dir = Path.cwd()
     cfg = load_config(project_dir)
+
+    if tool is not None:
+        # Show resolved container spec for the tool
+        cfg.active_tool = tool
+        cfg = resolve_effective_config(cfg)
+
+        runtime = get_runtime(cfg.runtime)
+        cfg.runtime = runtime.name
+        runtime.adjust_config(cfg)
+
+        effective_project_dir = project_dir if cfg.mount_project else None
+        spec = build_container_spec(cfg, effective_project_dir, [tool], tty=False, stdin_open=False)
+        _print_container_spec(spec)
+        return
 
     console.print(f"[bold]runtime:[/] {cfg.runtime or 'auto'}")
     console.print(f"[bold]ssh_agent:[/] {cfg.ssh_agent}")

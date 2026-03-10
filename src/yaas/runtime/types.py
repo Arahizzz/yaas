@@ -144,8 +144,12 @@ class ContainerRuntime(Protocol):
         """Exec into a running container, return exit code."""
         ...
 
-    def list_containers(self, prefix: str) -> list[dict[str, Any]]:
-        """List containers matching a name prefix."""
+    def list_containers(
+        self,
+        prefix: str | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """List containers matching optional name prefix and/or labels."""
         ...
 
     def inspect_container(self, name: str) -> dict[str, Any] | None:

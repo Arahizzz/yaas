@@ -243,17 +243,19 @@ class BaseRuntime(ABC):
         result = subprocess.run(cmd)
         return result.returncode
 
-    def list_containers(self, prefix: str) -> list[dict[str, Any]]:
+    def list_containers(
+        self,
+        prefix: str | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        cmd = [*self.command_prefix, "ps", "-a"]
+        if prefix:
+            cmd.extend(["--filter", f"name={prefix}"])
+        for key, value in (labels or {}).items():
+            cmd.extend(["--filter", f"label={key}={value}"])
+        cmd.extend(["--format", "json"])
         result = subprocess.run(
-            [
-                *self.command_prefix,
-                "ps",
-                "-a",
-                "--filter",
-                f"name={prefix}",
-                "--format",
-                "json",
-            ],
+            cmd,
             capture_output=True,
             text=True,
         )
