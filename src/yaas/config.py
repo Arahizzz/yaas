@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from dataclasses import fields as dc_fields
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -309,15 +309,6 @@ def _merge_toml(config: Config, path: Path) -> None:
 
 def _merge_dict(config: Config, data: dict[str, Any]) -> None:
     """Merge dictionary values into config."""
-    # Backward compat: translate deprecated container_socket to ignored warning
-    if "container_socket" in data:
-        logger.warning(
-            "container_socket is deprecated and ignored. "
-            'Use mounts = ["/var/run/docker.sock"] for DoD, '
-            "or podman = true for DinD."
-        )
-        data = {k: v for k, v in data.items() if k != "container_socket"}
-
     for key, value in data.items():
         if key == "resources" and isinstance(value, dict) and config.resources is not None:
             # Handle nested resources
@@ -341,187 +332,136 @@ def _merge_dict(config: Config, data: dict[str, Any]) -> None:
             setattr(config, key, value)
 
 
-def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
-    """Merge tool entries with field-level merge per tool."""
-    for name, tool_data in data.items():
-        if not isinstance(tool_data, dict):
+_T = TypeVar("_T", ToolConfig, BoxSpec)
+
+
+def _merge_container_entries(
+    entries: dict[str, _T],
+    data: dict[str, Any],
+    factory: type[_T],
+    list_fields: tuple[str, ...],
+    replace_fields: frozenset[str],
+    extend_fields: frozenset[str],
+    label: str,
+) -> None:
+    """Generic merge for tool/box entries with validation and field-level merge.
+
+    Args:
+        entries: Dict to merge into (config.tools or config.boxes).
+        data: Raw TOML data for the section.
+        factory: ToolConfig or BoxSpec class.
+        list_fields: All list[str] fields to validate.
+        replace_fields: List fields that replace (e.g. command, yolo_flags, entrypoint, shell).
+        extend_fields: List fields that extend (mounts, ports, devices).
+        label: "tool" or "box" for warning messages.
+    """
+    for name, entry_data in data.items():
+        if not isinstance(entry_data, dict):
             logger.warning(
-                "Skipping tool '%s': expected table, got %s", name, type(tool_data).__name__
-            )
-            continue
-
-        # Validate list fields before modifying the dict
-        parsed_lists: dict[str, list[str]] = {}
-        valid = True
-        for field_name in ("command", "yolo_flags", "mounts", "ports", "devices"):
-            if field_name in tool_data:
-                val = tool_data[field_name]
-                if isinstance(val, list) and all(isinstance(v, str) for v in val):
-                    parsed_lists[field_name] = val
-                else:
-                    logger.warning(
-                        "Skipping tool '%s': %s must be a list of strings",
-                        name,
-                        field_name,
-                    )
-                    valid = False
-                    break
-
-        # Validate env dict
-        parsed_env: dict[str, str | bool] | None = None
-        if valid and "env" in tool_data:
-            env_val = tool_data["env"]
-            if isinstance(env_val, dict) and all(
-                isinstance(k, str) and isinstance(v, (str, bool)) for k, v in env_val.items()
-            ):
-                parsed_env = env_val
-            else:
-                logger.warning(
-                    "Skipping tool '%s': env must be a dict of str -> str | bool",
-                    name,
-                )
-                valid = False
-
-        if not valid:
-            continue
-
-        # Backward compat: warn on deprecated container_socket in tool config
-        if "container_socket" in tool_data:
-            logger.warning(
-                "container_socket in tool '%s' is deprecated and ignored. "
-                "Use mounts for DoD or podman = true for DinD.",
+                "Skipping %s '%s': expected table, got %s",
+                label,
                 name,
-            )
-
-        # Now safe to create/update the entry
-        existing = tools.get(name)
-        if existing is None:
-            existing = ToolConfig()
-            tools[name] = existing
-
-        if "command" in parsed_lists:
-            existing.command = parsed_lists["command"]
-        if "yolo_flags" in parsed_lists:
-            existing.yolo_flags = parsed_lists["yolo_flags"]
-        if "mounts" in parsed_lists:
-            existing.mounts.extend(parsed_lists["mounts"])
-        if "ports" in parsed_lists:
-            existing.ports.extend(parsed_lists["ports"])
-        if "devices" in parsed_lists:
-            existing.devices.extend(parsed_lists["devices"])
-        if parsed_env is not None:
-            existing.env.update(parsed_env)
-
-        # Container setting overrides — generic via ContainerSettings fields
-        for field_name in _CONTAINER_FIELDS - _SPECIAL_FIELDS:
-            if field_name in tool_data and isinstance(tool_data[field_name], (bool, str)):
-                setattr(existing, field_name, tool_data[field_name])
-
-        if "resources" in tool_data and isinstance(tool_data["resources"], dict):
-            if existing.resources is None:
-                existing.resources = ResourceLimits()
-            for rkey, rvalue in tool_data["resources"].items():
-                if hasattr(existing.resources, rkey):
-                    setattr(existing.resources, rkey, rvalue)
-
-        if "security" in tool_data and isinstance(tool_data["security"], dict):
-            if existing.security is None:
-                existing.security = SecuritySettings()
-            for skey, svalue in tool_data["security"].items():
-                if hasattr(existing.security, skey):
-                    setattr(existing.security, skey, svalue)
-
-        # Base field
-        if "base" in tool_data and isinstance(tool_data["base"], str):
-            existing.base = tool_data["base"]
-
-
-def _merge_boxes(boxes: dict[str, BoxSpec], data: dict[str, Any]) -> None:
-    """Merge box entries with field-level merge per box."""
-    for name, box_data in data.items():
-        if not isinstance(box_data, dict):
-            logger.warning(
-                "Skipping box '%s': expected table, got %s", name, type(box_data).__name__
+                type(entry_data).__name__,
             )
             continue
 
         # Validate list fields
         parsed_lists: dict[str, list[str]] = {}
         valid = True
-        for field_name in ("entrypoint", "command", "shell", "mounts", "ports", "devices"):
-            if field_name in box_data:
-                val = box_data[field_name]
+        for field_name in list_fields:
+            if field_name in entry_data:
+                val = entry_data[field_name]
                 if isinstance(val, list) and all(isinstance(v, str) for v in val):
                     parsed_lists[field_name] = val
                 else:
                     logger.warning(
-                        "Skipping box '%s': %s must be a list of strings",
-                        name,
-                        field_name,
+                        "Skipping %s '%s': %s must be a list of strings", label, name, field_name
                     )
                     valid = False
                     break
 
         # Validate env dict
         parsed_env: dict[str, str | bool] | None = None
-        if valid and "env" in box_data:
-            env_val = box_data["env"]
+        if valid and "env" in entry_data:
+            env_val = entry_data["env"]
             if isinstance(env_val, dict) and all(
                 isinstance(k, str) and isinstance(v, (str, bool)) for k, v in env_val.items()
             ):
                 parsed_env = env_val
             else:
                 logger.warning(
-                    "Skipping box '%s': env must be a dict of str -> str | bool",
-                    name,
+                    "Skipping %s '%s': env must be a dict of str -> str | bool", label, name
                 )
                 valid = False
 
         if not valid:
             continue
 
-        existing = boxes.get(name)
+        # Create or get existing entry
+        existing = entries.get(name)
         if existing is None:
-            existing = BoxSpec()
-            boxes[name] = existing
+            existing = factory()
+            entries[name] = existing
 
-        # Box-specific fields
-        if "entrypoint" in parsed_lists:
-            existing.entrypoint = parsed_lists["entrypoint"]
-        if "command" in parsed_lists:
-            existing.command = parsed_lists["command"]
-        if "shell" in parsed_lists:
-            existing.shell = parsed_lists["shell"]
-        if "mounts" in parsed_lists:
-            existing.mounts.extend(parsed_lists["mounts"])
-        if "ports" in parsed_lists:
-            existing.ports.extend(parsed_lists["ports"])
-        if "devices" in parsed_lists:
-            existing.devices.extend(parsed_lists["devices"])
+        # Apply list fields with correct semantics
+        for field_name, values in parsed_lists.items():
+            if field_name in replace_fields:
+                setattr(existing, field_name, values)
+            elif field_name in extend_fields:
+                getattr(existing, field_name).extend(values)
         if parsed_env is not None:
             existing.env.update(parsed_env)
 
-        # Container setting overrides
+        # Container setting overrides — generic via ContainerSettings fields
         for field_name in _CONTAINER_FIELDS - _SPECIAL_FIELDS:
-            if field_name in box_data and isinstance(box_data[field_name], (bool, str)):
-                setattr(existing, field_name, box_data[field_name])
+            if field_name in entry_data and isinstance(entry_data[field_name], (bool, str)):
+                setattr(existing, field_name, entry_data[field_name])
 
-        if "resources" in box_data and isinstance(box_data["resources"], dict):
+        if "resources" in entry_data and isinstance(entry_data["resources"], dict):
             if existing.resources is None:
                 existing.resources = ResourceLimits()
-            for rkey, rvalue in box_data["resources"].items():
+            for rkey, rvalue in entry_data["resources"].items():
                 if hasattr(existing.resources, rkey):
                     setattr(existing.resources, rkey, rvalue)
 
-        if "security" in box_data and isinstance(box_data["security"], dict):
+        if "security" in entry_data and isinstance(entry_data["security"], dict):
             if existing.security is None:
                 existing.security = SecuritySettings()
-            for skey, svalue in box_data["security"].items():
+            for skey, svalue in entry_data["security"].items():
                 if hasattr(existing.security, skey):
                     setattr(existing.security, skey, svalue)
 
-        if "base" in box_data and isinstance(box_data["base"], str):
-            existing.base = box_data["base"]
+        if "base" in entry_data and isinstance(entry_data["base"], str):
+            existing.base = entry_data["base"]
+
+
+_TOOL_LIST_FIELDS = ("command", "yolo_flags", "mounts", "ports", "devices")
+_TOOL_REPLACE_FIELDS = frozenset({"command", "yolo_flags"})
+_TOOL_EXTEND_FIELDS = frozenset({"mounts", "ports", "devices"})
+
+_BOX_LIST_FIELDS = ("entrypoint", "command", "shell", "mounts", "ports", "devices")
+_BOX_REPLACE_FIELDS = frozenset({"entrypoint", "command", "shell"})
+_BOX_EXTEND_FIELDS = frozenset({"mounts", "ports", "devices"})
+
+
+def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
+    """Merge tool entries with field-level merge per tool."""
+    _merge_container_entries(
+        tools,
+        data,
+        ToolConfig,
+        _TOOL_LIST_FIELDS,
+        _TOOL_REPLACE_FIELDS,
+        _TOOL_EXTEND_FIELDS,
+        "tool",
+    )
+
+
+def _merge_boxes(boxes: dict[str, BoxSpec], data: dict[str, Any]) -> None:
+    """Merge box entries with field-level merge per box."""
+    _merge_container_entries(
+        boxes, data, BoxSpec, _BOX_LIST_FIELDS, _BOX_REPLACE_FIELDS, _BOX_EXTEND_FIELDS, "box"
+    )
 
 
 def load_box_specs() -> dict[str, BoxSpec]:
