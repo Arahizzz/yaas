@@ -51,6 +51,7 @@ class ContainerSettings:
     For Config: defaults are concrete values (False, "bridge", etc.).
     """
 
+    base: str | None = None  # "default", "minimal", "none" — controls config inheritance
     ssh_agent: bool | None = None
     git_config: bool | None = None
     podman: bool | None = None
@@ -82,6 +83,22 @@ class ToolConfig(ContainerSettings):
 
     command: list[str] = field(default_factory=list)  # empty = use tool name
     yolo_flags: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BoxSpec(ContainerSettings):
+    """Configuration for a persistent box (e.g., shell, hardened).
+
+    Similar to ToolConfig but for persistent containers.
+    Uses Docker entrypoint/command semantics:
+    - entrypoint: init process (default: ["sleep", "infinity"])
+    - command: args to entrypoint (default: [])
+    - shell: default shell for `yaas box enter` (default: ["bash"])
+    """
+
+    entrypoint: list[str] | None = None  # Default: ["sleep", "infinity"]
+    command: list[str] = field(default_factory=list)
+    shell: list[str] | None = None  # Default: ["bash"]
 
 
 @dataclass
@@ -126,13 +143,16 @@ class Config(ContainerSettings):
     # Tool shortcuts (yaas claude, yaas aider, etc.)
     tools: dict[str, ToolConfig] = field(default_factory=dict)
 
+    # Box specs (yaas box create <name> <spec>)
+    boxes: dict[str, BoxSpec] = field(default_factory=dict)
+
     # Active tool (set by CLI tool commands, None for run)
     active_tool: str | None = None
 
 
 # Precompute ContainerSettings field names for generic merge/resolve
 _CONTAINER_FIELDS = frozenset(f.name for f in dc_fields(ContainerSettings))
-_SPECIAL_FIELDS = frozenset({"mounts", "ports", "devices", "env", "resources", "security"})
+_SPECIAL_FIELDS = frozenset({"base", "mounts", "ports", "devices", "env", "resources", "security"})
 
 
 def _ensure_global_config() -> None:
@@ -177,6 +197,53 @@ def load_tool_commands() -> dict[str, ToolConfig]:
         return {}
 
 
+def _apply_overrides(resolved: Config, overrides: ContainerSettings) -> None:
+    """Apply ContainerSettings overrides onto a resolved Config (in-place).
+
+    Used by both resolve_effective_config (tools) and resolve_box_config (boxes).
+    """
+    # Scalar overrides — generic via ContainerSettings field introspection
+    for field_name in _CONTAINER_FIELDS - _SPECIAL_FIELDS:
+        value = getattr(overrides, field_name)
+        if value is not None:
+            setattr(resolved, field_name, value)
+
+    # Resource overrides (field-level merge)
+    if overrides.resources is not None:
+        resolved.resources = replace(resolved.resources) if resolved.resources else ResourceLimits()
+        for rf in dc_fields(ResourceLimits):
+            rv = getattr(overrides.resources, rf.name)
+            if rv is not None:
+                setattr(resolved.resources, rf.name, rv)
+
+    # Security overrides (field-level merge)
+    if overrides.security is not None:
+        resolved.security = replace(resolved.security) if resolved.security else SecuritySettings()
+        for sf in dc_fields(SecuritySettings):
+            sv = getattr(overrides.security, sf.name)
+            if sv is not None:
+                setattr(resolved.security, sf.name, sv)
+
+    # Env overlay
+    if overrides.env:
+        resolved.env = {**resolved.env, **overrides.env}
+
+
+def _get_base_config(base: str) -> Config:
+    """Create a starting Config for a given base level.
+
+    - "minimal": hardcoded Config() defaults (no global/project merge)
+    - "none": absolute zero — no caps, no network, no shared volumes
+    """
+    if base == "none":
+        return Config(
+            network_mode="none",
+            security=SecuritySettings(capabilities=[]),
+        )
+    # "minimal" = plain defaults
+    return Config()
+
+
 def resolve_effective_config(config: Config) -> Config:
     """Apply active tool overrides to produce effective config.
 
@@ -193,33 +260,41 @@ def resolve_effective_config(config: Config) -> Config:
     if not tool:
         return config
 
-    resolved = replace(config)
+    base = tool.base
+    if base is not None and base != "default":
+        resolved = _get_base_config(base)
+        resolved.tools = config.tools
+        resolved.boxes = config.boxes
+        resolved.base = base
+    else:
+        resolved = replace(config)
 
-    # Scalar overrides — generic via ContainerSettings field introspection
-    for field_name in _CONTAINER_FIELDS - _SPECIAL_FIELDS:
-        value = getattr(tool, field_name)
-        if value is not None:
-            setattr(resolved, field_name, value)
+    _apply_overrides(resolved, tool)
+    return resolved
 
-    # Resource overrides (field-level merge)
-    if tool.resources is not None:
-        resolved.resources = replace(config.resources) if config.resources else ResourceLimits()
-        for rf in dc_fields(ResourceLimits):
-            rv = getattr(tool.resources, rf.name)
-            if rv is not None:
-                setattr(resolved.resources, rf.name, rv)
 
-    # Security overrides (field-level merge)
-    if tool.security is not None:
-        resolved.security = replace(config.security) if config.security else SecuritySettings()
-        for sf in dc_fields(SecuritySettings):
-            sv = getattr(tool.security, sf.name)
-            if sv is not None:
-                setattr(resolved.security, sf.name, sv)
+def resolve_box_config(config: Config, box_name: str) -> Config:
+    """Apply box spec overrides to produce effective config for a box.
 
-    # Env overlay (tool env on top of global env)
-    if tool.env:
-        resolved.env = {**config.env, **tool.env}
+    Similar to resolve_effective_config but for boxes.
+    Default mount_project=False for boxes (unless explicitly set).
+    """
+    box = config.boxes.get(box_name)
+
+    base = box.base if box else None
+    if base is not None and base != "default":
+        resolved = _get_base_config(base)
+        resolved.tools = config.tools
+        resolved.boxes = config.boxes
+        resolved.base = base
+    else:
+        resolved = replace(config)
+
+    # Boxes default to no project mount
+    resolved.mount_project = False
+
+    if box:
+        _apply_overrides(resolved, box)
 
     return resolved
 
@@ -238,7 +313,7 @@ def _merge_dict(config: Config, data: dict[str, Any]) -> None:
     if "container_socket" in data:
         logger.warning(
             "container_socket is deprecated and ignored. "
-            "Use mounts = [\"/var/run/docker.sock\"] for DoD, "
+            'Use mounts = ["/var/run/docker.sock"] for DoD, '
             "or podman = true for DinD."
         )
         data = {k: v for k, v in data.items() if k != "container_socket"}
@@ -256,6 +331,8 @@ def _merge_dict(config: Config, data: dict[str, Any]) -> None:
                     setattr(config.security, skey, svalue)
         elif key == "tools" and isinstance(value, dict):
             _merge_tools(config.tools, value)
+        elif key == "box" and isinstance(value, dict):
+            _merge_boxes(config.boxes, value)
         elif key in ("mounts", "ports", "devices") and isinstance(value, list):
             getattr(config, key).extend(value)
         elif key == "env" and isinstance(value, dict):
@@ -353,3 +430,108 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
             for skey, svalue in tool_data["security"].items():
                 if hasattr(existing.security, skey):
                     setattr(existing.security, skey, svalue)
+
+        # Base field
+        if "base" in tool_data and isinstance(tool_data["base"], str):
+            existing.base = tool_data["base"]
+
+
+def _merge_boxes(boxes: dict[str, BoxSpec], data: dict[str, Any]) -> None:
+    """Merge box entries with field-level merge per box."""
+    for name, box_data in data.items():
+        if not isinstance(box_data, dict):
+            logger.warning(
+                "Skipping box '%s': expected table, got %s", name, type(box_data).__name__
+            )
+            continue
+
+        # Validate list fields
+        parsed_lists: dict[str, list[str]] = {}
+        valid = True
+        for field_name in ("entrypoint", "command", "shell", "mounts", "ports", "devices"):
+            if field_name in box_data:
+                val = box_data[field_name]
+                if isinstance(val, list) and all(isinstance(v, str) for v in val):
+                    parsed_lists[field_name] = val
+                else:
+                    logger.warning(
+                        "Skipping box '%s': %s must be a list of strings",
+                        name,
+                        field_name,
+                    )
+                    valid = False
+                    break
+
+        # Validate env dict
+        parsed_env: dict[str, str | bool] | None = None
+        if valid and "env" in box_data:
+            env_val = box_data["env"]
+            if isinstance(env_val, dict) and all(
+                isinstance(k, str) and isinstance(v, (str, bool)) for k, v in env_val.items()
+            ):
+                parsed_env = env_val
+            else:
+                logger.warning(
+                    "Skipping box '%s': env must be a dict of str -> str | bool",
+                    name,
+                )
+                valid = False
+
+        if not valid:
+            continue
+
+        existing = boxes.get(name)
+        if existing is None:
+            existing = BoxSpec()
+            boxes[name] = existing
+
+        # Box-specific fields
+        if "entrypoint" in parsed_lists:
+            existing.entrypoint = parsed_lists["entrypoint"]
+        if "command" in parsed_lists:
+            existing.command = parsed_lists["command"]
+        if "shell" in parsed_lists:
+            existing.shell = parsed_lists["shell"]
+        if "mounts" in parsed_lists:
+            existing.mounts.extend(parsed_lists["mounts"])
+        if "ports" in parsed_lists:
+            existing.ports.extend(parsed_lists["ports"])
+        if "devices" in parsed_lists:
+            existing.devices.extend(parsed_lists["devices"])
+        if parsed_env is not None:
+            existing.env.update(parsed_env)
+
+        # Container setting overrides
+        for field_name in _CONTAINER_FIELDS - _SPECIAL_FIELDS:
+            if field_name in box_data and isinstance(box_data[field_name], (bool, str)):
+                setattr(existing, field_name, box_data[field_name])
+
+        if "resources" in box_data and isinstance(box_data["resources"], dict):
+            if existing.resources is None:
+                existing.resources = ResourceLimits()
+            for rkey, rvalue in box_data["resources"].items():
+                if hasattr(existing.resources, rkey):
+                    setattr(existing.resources, rkey, rvalue)
+
+        if "security" in box_data and isinstance(box_data["security"], dict):
+            if existing.security is None:
+                existing.security = SecuritySettings()
+            for skey, svalue in box_data["security"].items():
+                if hasattr(existing.security, skey):
+                    setattr(existing.security, skey, svalue)
+
+        if "base" in box_data and isinstance(box_data["base"], str):
+            existing.base = box_data["base"]
+
+
+def load_box_specs() -> dict[str, BoxSpec]:
+    """Load box specs for CLI command registration.
+
+    Reads global + project config from CWD. Called at import time by cli.py.
+    Never raises — falls back to empty dict on any error.
+    """
+    try:
+        return load_config(Path.cwd()).boxes
+    except Exception:
+        logger.warning("Failed to load box config, falling back to empty", exc_info=True)
+        return {}
