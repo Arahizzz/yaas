@@ -126,3 +126,23 @@ env = { ANTHROPIC_API_KEY = true, IS_SANDBOX = "1" }
 # [tools.aider]
 # yolo_flags = ["--yes"]
 # mounts = ["~/.aider"]
+
+# Box specs (persistent containers)
+# Each box spec defines a persistent container environment.
+# Usage: yaas box create <name> <spec>, then yaas box enter <name>
+#
+# Box-specific fields:
+# - entrypoint: init process (default: ["sleep", "infinity"])
+# - command: args to entrypoint (default: [])
+# - shell: default shell for `yaas box enter` (default: ["bash"])
+# - base: config inheritance ("default", "minimal", "none")
+#
+# Boxes also support all container settings (ssh_agent, git_config, etc.)
+
+# [box.hardened]
+# base = "none"
+# network_mode = "none"
+
+[box.shell]
+ssh_agent = true
+git_config = true

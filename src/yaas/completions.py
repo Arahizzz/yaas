@@ -21,6 +21,18 @@ class NetworkMode(str, Enum):
     none = "none"
 
 
+def complete_box(incomplete: str) -> list[tuple[str, str]]:
+    """Autocomplete callback for box spec names."""
+    try:
+        from .config import load_box_specs
+
+        boxes = load_box_specs()
+    except Exception:
+        return []
+
+    return [(name, "box spec") for name in boxes if name.startswith(incomplete)]
+
+
 def complete_worktree(incomplete: str) -> list[tuple[str, str]]:
     """Autocomplete callback for worktree names."""
     try:

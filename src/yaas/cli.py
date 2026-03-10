@@ -3,37 +3,38 @@
 from __future__ import annotations
 
 import subprocess
-import uuid
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
-from .completions import NetworkMode, RuntimeChoice, complete_worktree
+from .completions import NetworkMode, RuntimeChoice, complete_box, complete_worktree
 from .config import (
     _CONTAINER_FIELDS,
     _SPECIAL_FIELDS,
+    BoxSpec,
     Config,
+    ResourceLimits,
     ToolConfig,
     load_config,
     load_tool_commands,
     resolve_effective_config,
 )
 from .constants import (
-    CLONE_VOLUME_PREFIX,
+    BOX_CONTAINER_PREFIX,
     HOME_VOLUME,
     NIX_VOLUME,
     RUNTIME_IMAGE,
 )
 from .container import (
-    build_clone_spec,
-    build_clone_work_spec,
+    build_box_spec,
     build_container_spec,
-    extract_repo_name,
 )
 from .logging import get_logger, setup_logging
 from .platform import PlatformError, check_platform_support
-from .runtime import ContainerRuntime, get_runtime
+from .runtime import ContainerRuntime, ExecSpec, get_runtime
 from .startup_ui import (
     is_interactive,
     print_startup_footer,
@@ -66,6 +67,12 @@ app = typer.Typer(
     help="Run AI coding agents in sandboxed containers",
     no_args_is_help=True,
 )
+box_app = typer.Typer(
+    name="box",
+    help="Manage persistent sandbox containers (boxes)",
+    no_args_is_help=True,
+)
+app.add_typer(box_app, name="box")
 worktree_app = typer.Typer(
     name="worktree",
     help="Manage git worktrees for parallel development",
@@ -103,10 +110,6 @@ def run(
     worktree: str | None = typer.Option(
         None, "--worktree", "-w", help="Run in worktree", autocompletion=complete_worktree
     ),
-    clone: str | None = typer.Option(None, "--clone", help="Clone git repo into ephemeral volume"),
-    ref: str | None = typer.Option(
-        None, "--ref", "-r", help="Git ref (tag/branch) to checkout when cloning"
-    ),
     ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
     git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
     podman: bool = typer.Option(False, "--podman", help="Enable rootless Podman inside container"),
@@ -135,12 +138,8 @@ def run(
         raise typer.BadParameter("Missing command to run")
 
     # Validate mutual exclusion
-    if clone and worktree:
-        raise typer.BadParameter("--clone and --worktree are mutually exclusive")
     if no_project and worktree:
         raise typer.BadParameter("--no-project and --worktree are mutually exclusive")
-    if no_project and clone:
-        raise typer.BadParameter("--no-project and --clone are mutually exclusive")
 
     project_dir, worktree_name = _resolve_worktree(worktree)
     config = load_config(project_dir)
@@ -168,7 +167,7 @@ def run(
         config.runtime = runtime.value
     _apply_cli_overrides(config, mount, port, device, env)
 
-    _run_container(config, project_dir, ctx.args, worktree_name, clone_url=clone, clone_ref=ref)
+    _run_container(config, project_dir, ctx.args, worktree_name)
 
 
 def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
@@ -186,12 +185,6 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
         ctx: typer.Context,
         worktree: str | None = typer.Option(
             None, "--worktree", "-w", help="Run in worktree", autocompletion=complete_worktree
-        ),
-        clone: str | None = typer.Option(
-            None, "--clone", help="Clone git repo into ephemeral volume"
-        ),
-        ref: str | None = typer.Option(
-            None, "--ref", "-r", help="Git ref (tag/branch) to checkout when cloning"
         ),
         ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
         git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
@@ -227,12 +220,8 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
     ) -> None:
         """Run AI tool in sandbox with YOLO mode (auto-confirm)."""
         # Validate mutual exclusion
-        if clone and worktree:
-            raise typer.BadParameter("--clone and --worktree are mutually exclusive")
         if no_project and worktree:
             raise typer.BadParameter("--no-project and --worktree are mutually exclusive")
-        if no_project and clone:
-            raise typer.BadParameter("--no-project and --clone are mutually exclusive")
 
         project_dir, worktree_name = _resolve_worktree(worktree)
         config = load_config(project_dir)
@@ -271,7 +260,7 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
             command.extend(tc.yolo_flags)
         command.extend(ctx.args)
 
-        _run_container(config, project_dir, command, worktree_name, clone_url=clone, clone_ref=ref)
+        _run_container(config, project_dir, command, worktree_name)
 
     # Build descriptive help text from tool config
     cmd_name = " ".join(tool_config.command) if tool_config.command else tool
@@ -299,6 +288,7 @@ _RESERVED_COMMANDS = {
     "cleanup",
     "pull-image",
     "worktree",
+    "box",
 }
 
 # Register tool commands from config
@@ -308,6 +298,314 @@ for _tool_name, _tool_config in _tools.items():
         logger.warning("Tool '%s' conflicts with built-in command, skipping", _tool_name)
         continue
     _create_tool_command(_tool_name, _tool_config)
+
+
+# --- Box helpers ---
+
+
+def _box_container_name(name: str) -> str:
+    """Convert box name to container name."""
+    return f"{BOX_CONTAINER_PREFIX}{name}"
+
+
+def _get_box_label(info: dict[str, Any], key: str) -> str | None:
+    """Extract a label value from container inspect data."""
+    labels = info.get("Config", {}).get("Labels", {})
+    val: str | None = labels.get(key)
+    return val
+
+
+# --- Box subcommands ---
+
+
+@box_app.command(name="create")
+def box_create(
+    name: str = typer.Argument(..., help="Name for the box"),
+    spec: str | None = typer.Argument(
+        None, help="Box spec from config (e.g., shell)", autocompletion=complete_box
+    ),
+    ssh_agent: bool = typer.Option(False, "--ssh-agent", help="Forward SSH agent"),
+    git_config: bool = typer.Option(False, "--git-config", help="Mount git config"),
+    podman: bool = typer.Option(False, "--podman", help="Enable rootless Podman inside container"),
+    podman_docker_socket: bool = typer.Option(
+        False, "--podman-docker-socket", help="Start Podman socket (Docker-compatible API)"
+    ),
+    clipboard: bool = typer.Option(
+        False, "--clipboard", help="Enable clipboard access for image pasting"
+    ),
+    network: NetworkMode | None = typer.Option(None, "--network", help="Network mode"),
+    memory: str | None = typer.Option(None, "--memory", "-m", help="Memory limit (e.g., 8g)"),
+    cpus: float | None = typer.Option(None, "--cpus", help="CPU limit (e.g., 2.0)"),
+    mount: list[str] | None = typer.Option(None, "--mount", "-v", help="Ad-hoc mount (mount spec)"),
+    port: list[str] | None = typer.Option(
+        None, "--port", "-p", help="Publish port (host:container)"
+    ),
+    device: list[str] | None = typer.Option(
+        None, "--device", help="Pass through host device (e.g., /dev/fuse)"
+    ),
+    env: list[str] | None = typer.Option(None, "--env", "-e", help="Ad-hoc env (KEY=VALUE or KEY)"),
+    base: str | None = typer.Option(None, "--base", help="Config base: default, minimal, none"),
+    runtime_opt: RuntimeChoice | None = typer.Option(None, "--runtime", help="Container runtime"),
+) -> None:
+    """Create a persistent box container."""
+    project_dir = Path.cwd()
+    config = load_config(project_dir)
+
+    # Use spec name, or create ad-hoc spec
+    effective_spec = spec or "__adhoc__"
+    if effective_spec not in config.boxes:
+        config.boxes[effective_spec] = BoxSpec()
+
+    # Apply base
+    if base is not None:
+        config.boxes[effective_spec].base = base
+
+    # CLI flag overrides
+    if ssh_agent:
+        config.boxes[effective_spec].ssh_agent = True
+    if git_config:
+        config.boxes[effective_spec].git_config = True
+    if podman:
+        config.boxes[effective_spec].podman = True
+    if podman_docker_socket:
+        config.boxes[effective_spec].podman_docker_socket = True
+    if clipboard:
+        config.boxes[effective_spec].clipboard = True
+    if network is not None:
+        config.boxes[effective_spec].network_mode = network.value
+    if memory:
+        if config.boxes[effective_spec].resources is None:
+            config.boxes[effective_spec].resources = ResourceLimits()
+        res = config.boxes[effective_spec].resources
+        assert res is not None
+        res.memory = memory
+    if cpus:
+        if config.boxes[effective_spec].resources is None:
+            config.boxes[effective_spec].resources = ResourceLimits()
+        res = config.boxes[effective_spec].resources
+        assert res is not None
+        res.cpus = cpus
+    if runtime_opt:
+        config.boxes[effective_spec].runtime = runtime_opt.value
+    _apply_cli_overrides(config, mount, port, device, env)
+
+    runtime = get_runtime(config.runtime)
+    config.runtime = runtime.name
+    runtime.adjust_config(config)
+
+    container_name = _box_container_name(name)
+
+    # Pull image if enabled
+    if config.auto_pull_image:
+        print_step("Pulling image")
+        _pull_image(runtime)
+
+    # Build and create container
+    container_spec = build_box_spec(config, effective_spec, container_name)
+
+    print_step(f"Creating box '{name}'")
+    if not runtime.create_container(container_spec):
+        console.print(f"[red]Failed to create box '{name}'[/]")
+        raise typer.Exit(1)
+
+    # Start the container
+    if not runtime.start_container(container_name):
+        console.print(f"[red]Failed to start box '{name}'[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Box '{name}' created and running.[/]")
+    console.print(f"[dim]Enter with: yaas box enter {name}[/]")
+
+
+@box_app.command(name="enter")
+def box_enter(
+    name: str = typer.Argument(..., help="Box name"),
+) -> None:
+    """Enter a running box with an interactive shell."""
+    project_dir = Path.cwd()
+    config = load_config(project_dir)
+    runtime = get_runtime(config.runtime)
+    container_name = _box_container_name(name)
+
+    # Check container exists
+    info = runtime.inspect_container(container_name)
+    if info is None:
+        console.print(f"[red]Box '{name}' not found[/]")
+        raise typer.Exit(1)
+
+    # Determine shell from spec
+    shell_cmd = ["bash"]
+    spec_name = _get_box_label(info, "yaas.box.spec")
+    if spec_name:
+        box_spec = config.boxes.get(spec_name)
+        if box_spec and box_spec.shell:
+            shell_cmd = list(box_spec.shell)
+
+    exec_spec = ExecSpec(
+        container_name=container_name,
+        command=shell_cmd,
+        tty=stdin_is_tty(),
+        stdin_open=True,
+    )
+    exit_code = runtime.exec_container(exec_spec)
+    raise typer.Exit(exit_code)
+
+
+@box_app.command(
+    name="exec",
+    context_settings={
+        "allow_extra_args": True,
+        "allow_interspersed_args": False,
+        "ignore_unknown_options": True,
+    },
+)
+def box_exec(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Box name"),
+) -> None:
+    """Execute a command in a running box."""
+    if not ctx.args:
+        raise typer.BadParameter("Missing command to run")
+
+    config = load_config(Path.cwd())
+    runtime = get_runtime(config.runtime)
+    container_name = _box_container_name(name)
+
+    info = runtime.inspect_container(container_name)
+    if info is None:
+        console.print(f"[red]Box '{name}' not found[/]")
+        raise typer.Exit(1)
+
+    exec_spec = ExecSpec(
+        container_name=container_name,
+        command=ctx.args,
+        tty=stdin_is_tty(),
+        stdin_open=True,
+    )
+    exit_code = runtime.exec_container(exec_spec)
+    raise typer.Exit(exit_code)
+
+
+@box_app.command(name="stop")
+def box_stop(
+    name: str = typer.Argument(..., help="Box name"),
+) -> None:
+    """Stop a running box."""
+    runtime = get_runtime()
+    container_name = _box_container_name(name)
+
+    if runtime.stop_container(container_name):
+        console.print(f"[green]Box '{name}' stopped.[/]")
+    else:
+        console.print(f"[red]Failed to stop box '{name}'[/]")
+        raise typer.Exit(1)
+
+
+@box_app.command(name="start")
+def box_start(
+    name: str = typer.Argument(..., help="Box name"),
+) -> None:
+    """Start a stopped box."""
+    runtime = get_runtime()
+    container_name = _box_container_name(name)
+
+    if runtime.start_container(container_name):
+        console.print(f"[green]Box '{name}' started.[/]")
+    else:
+        console.print(f"[red]Failed to start box '{name}'[/]")
+        raise typer.Exit(1)
+
+
+@box_app.command(name="remove")
+def box_remove(
+    name: str = typer.Argument(..., help="Box name"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force removal (stop if running)"),
+) -> None:
+    """Remove a box container."""
+    runtime = get_runtime()
+    container_name = _box_container_name(name)
+
+    if runtime.remove_container(container_name, force=force):
+        console.print(f"[green]Box '{name}' removed.[/]")
+    else:
+        console.print(f"[red]Failed to remove box '{name}'[/]")
+        raise typer.Exit(1)
+
+
+@box_app.command(name="list")
+def box_list() -> None:
+    """List all boxes."""
+    runtime = get_runtime()
+    containers = runtime.list_containers(BOX_CONTAINER_PREFIX)
+
+    if not containers:
+        console.print("[dim]No boxes found.[/]")
+        return
+
+    table = Table(title="Boxes")
+    table.add_column("Name", style="bold")
+    table.add_column("Status")
+    table.add_column("Spec", style="dim")
+    table.add_column("Image", style="dim")
+
+    for c in containers:
+        # Podman and Docker have different JSON formats
+        full_name = c.get("Names", c.get("Name", ""))
+        if isinstance(full_name, list):
+            full_name = full_name[0] if full_name else ""
+        # Strip prefix to get box name
+        box_name = full_name.removeprefix(BOX_CONTAINER_PREFIX)
+
+        status = c.get("State", c.get("Status", "unknown"))
+        image = c.get("Image", "")
+        spec_label = c.get("Labels", {}).get("yaas.box.spec", "")
+
+        table.add_row(box_name, status, spec_label, image)
+
+    console.print(table)
+
+
+@box_app.command(name="info")
+def box_info(
+    name: str = typer.Argument(..., help="Box name"),
+) -> None:
+    """Show detailed info about a box."""
+    runtime = get_runtime()
+    container_name = _box_container_name(name)
+
+    info = runtime.inspect_container(container_name)
+    if info is None:
+        console.print(f"[red]Box '{name}' not found[/]")
+        raise typer.Exit(1)
+
+    state = info.get("State", {})
+    config_section = info.get("Config", {})
+
+    console.print(f"[bold]Name:[/] {name}")
+    console.print(f"[bold]Container:[/] {container_name}")
+    console.print(f"[bold]Status:[/] {state.get('Status', 'unknown')}")
+    console.print(f"[bold]Image:[/] {config_section.get('Image', 'unknown')}")
+
+    spec_name = _get_box_label(info, "yaas.box.spec")
+    if spec_name:
+        console.print(f"[bold]Spec:[/] {spec_name}")
+
+    # Show labels
+    labels = config_section.get("Labels", {})
+    if labels:
+        console.print("[bold]Labels:[/]")
+        for k, v in sorted(labels.items()):
+            console.print(f"  {k}: {v}")
+
+    # Show mounts
+    mounts = info.get("Mounts", [])
+    if mounts:
+        console.print("[bold]Mounts:[/]")
+        for m in mounts:
+            src = m.get("Source", m.get("Name", ""))
+            dst = m.get("Destination", "")
+            mount_type = m.get("Type", "")
+            console.print(f"  {src} -> {dst} ({mount_type})")
 
 
 @app.command()
@@ -395,54 +693,6 @@ def cleanup_volumes(
     console.print("[green]Reset complete. Tools will be reinstalled on next run.[/]")
 
 
-@cleanup_app.command(name="clones")
-def cleanup_clones(
-    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
-) -> None:
-    """Remove orphaned clone volumes from interrupted sessions."""
-    runtime = get_runtime()
-
-    # List all volumes and filter for clone volumes
-    result = subprocess.run(
-        [*runtime.command_prefix, "volume", "ls", "--format", "{{.Name}}"],
-        capture_output=True,
-        text=True,
-    )
-
-    if result.returncode != 0:
-        console.print(f"[red]Failed to list volumes: {result.stderr}[/]")
-        raise typer.Exit(1)
-
-    clone_volumes = [
-        name.strip()
-        for name in result.stdout.splitlines()
-        if name.strip().startswith(CLONE_VOLUME_PREFIX)
-    ]
-
-    if not clone_volumes:
-        console.print("[dim]No orphaned clone volumes found.[/]")
-        return
-
-    console.print(f"[yellow]Found {len(clone_volumes)} orphaned clone volume(s):[/]")
-    for vol in clone_volumes:
-        console.print(f"  - {vol}")
-
-    if not force:
-        confirm = typer.confirm("Remove these volumes?")
-        if not confirm:
-            raise typer.Abort()
-
-    removed = 0
-    for volume in clone_volumes:
-        if runtime.remove_volume(volume):
-            console.print(f"[green]Removed: {volume}[/]")
-            removed += 1
-        else:
-            console.print(f"[red]Failed to remove: {volume}[/]")
-
-    console.print(f"[green]Cleaned up {removed}/{len(clone_volumes)} volumes.[/]")
-
-
 @app.command(name="pull-image")
 def pull_image() -> None:
     """Pull the latest container image."""
@@ -465,69 +715,6 @@ def _upgrade_tools(config: Config, project_dir: Path, runtime: ContainerRuntime)
     cmd = ["mise", "upgrade", "--yes"]
     spec = build_container_spec(config, project_dir, cmd, tty=is_interactive(), stdin_open=False)
     return runtime.run(spec) == 0
-
-
-def _run_clone_workflow(
-    config: Config,
-    runtime: ContainerRuntime,
-    clone_url: str,
-    command: list[str],
-    ref: str | None = None,
-) -> None:
-    """Handle the complete clone workflow: create volume, clone, run, cleanup.
-
-    Args:
-        config: Configuration object
-        runtime: Container runtime to use
-        clone_url: Git repository URL to clone
-        command: Command to run in the cloned repository
-        ref: Optional git ref (tag or branch) to checkout
-    """
-    repo_name = extract_repo_name(clone_url)
-    clone_volume = f"{CLONE_VOLUME_PREFIX}{uuid.uuid4().hex[:12]}"
-
-    # Create ephemeral volume
-    print_step("Creating ephemeral volume")
-    if not runtime.create_volume(clone_volume):
-        console.print("[red]Failed to create ephemeral volume[/]")
-        raise typer.Exit(1)
-
-    try:
-        # Clone repository
-        step_msg = f"Cloning {repo_name}"
-        if ref:
-            step_msg += f" @ {ref}"
-        print_step(step_msg)
-        clone_spec = build_clone_spec(config, clone_url, clone_volume, repo_name, ref=ref)
-        if runtime.run(clone_spec) != 0:
-            console.print("[red]Failed to clone repository[/]")
-            raise typer.Exit(1)
-
-        # Upgrade tools if enabled
-        if config.auto_upgrade_tools:
-            print_step("Upgrading tools")
-            cmd = ["mise", "upgrade", "--yes"]
-            spec = build_clone_work_spec(
-                config, clone_volume, repo_name, cmd, tty=is_interactive(), stdin_open=False
-            )
-            runtime.run(spec)
-
-        # Build and run work container
-        spec = build_clone_work_spec(config, clone_volume, repo_name, command, tty=stdin_is_tty())
-
-        print_step("Launching sandbox")
-        print_startup_footer()
-
-        exit_code = runtime.run(spec)
-    finally:
-        # Always clean up the ephemeral volume
-        print_step("Removing ephemeral volume")
-        if not runtime.remove_volume(clone_volume):
-            logger.warning(f"Failed to remove ephemeral volume: {clone_volume}")
-            console.print(f"[yellow]Warning: Failed to remove volume {clone_volume}[/]")
-            console.print("[dim]Run 'podman/docker volume rm' to clean up manually[/]")
-
-    raise typer.Exit(exit_code)
 
 
 def _apply_cli_overrides(
@@ -558,8 +745,6 @@ def _run_container(
     project_dir: Path,
     command: list[str],
     worktree_name: str | None = None,
-    clone_url: str | None = None,
-    clone_ref: str | None = None,
 ) -> None:
     """Build spec and run container."""
     runtime = get_runtime(config.runtime)
@@ -573,11 +758,6 @@ def _run_container(
     if config.auto_pull_image:
         print_step("Pulling image")
         _pull_image(runtime)
-
-    # Clone mode: delegate to separate workflow
-    if clone_url:
-        _run_clone_workflow(config, runtime, clone_url, command, ref=clone_ref)
-        return  # _run_clone_workflow raises typer.Exit
 
     # Normal mode
     if config.auto_upgrade_tools:
