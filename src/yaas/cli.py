@@ -145,27 +145,24 @@ def run(
     config = load_config(project_dir)
 
     # CLI flags override config
-    if ssh_agent:
-        config.ssh_agent = True
-    if git_config:
-        config.git_config = True
-    if podman:
-        config.podman = True
-    if podman_docker_socket:
-        config.podman_docker_socket = True
-    if clipboard:
-        config.clipboard = True
-    if network is not None:
-        config.network_mode = network.value
-    if memory:
-        config.resources.memory = memory
-    if cpus:
-        config.resources.cpus = cpus
-    if no_project:
-        config.mount_project = False
-    if runtime:
-        config.runtime = runtime.value
-    _apply_cli_overrides(config, mount, port, device, env)
+    _apply_cli_flags(
+        config,
+        config,
+        ssh_agent=ssh_agent,
+        git_config=git_config,
+        podman=podman,
+        podman_docker_socket=podman_docker_socket,
+        clipboard=clipboard,
+        network=network,
+        memory=memory,
+        cpus=cpus,
+        no_project=no_project,
+        runtime=runtime,
+        mounts=mount,
+        ports=port,
+        devices=device,
+        envs=env,
+    )
 
     _run_container(config, project_dir, ctx.args, worktree_name)
 
@@ -231,27 +228,24 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
         config = resolve_effective_config(config)
 
         # CLI flags override tool config (highest priority)
-        if ssh_agent:
-            config.ssh_agent = True
-        if git_config:
-            config.git_config = True
-        if podman:
-            config.podman = True
-        if podman_docker_socket:
-            config.podman_docker_socket = True
-        if clipboard:
-            config.clipboard = True
-        if network is not None:
-            config.network_mode = network.value
-        if memory:
-            config.resources.memory = memory
-        if cpus:
-            config.resources.cpus = cpus
-        if no_project:
-            config.mount_project = False
-        if runtime:
-            config.runtime = runtime.value
-        _apply_cli_overrides(config, mount, port, device, env)
+        _apply_cli_flags(
+            config,
+            config,
+            ssh_agent=ssh_agent,
+            git_config=git_config,
+            podman=podman,
+            podman_docker_socket=podman_docker_socket,
+            clipboard=clipboard,
+            network=network,
+            memory=memory,
+            cpus=cpus,
+            no_project=no_project,
+            runtime=runtime,
+            mounts=mount,
+            ports=port,
+            devices=device,
+            envs=env,
+        )
 
         # Build command with YOLO flags (unless --no-yolo)
         tc = config.tools.get(tool)
@@ -356,38 +350,27 @@ def box_create(
     if effective_spec not in config.boxes:
         config.boxes[effective_spec] = BoxSpec()
 
-    # Apply base
+    # Apply base and CLI flag overrides to box spec
+    box_spec = config.boxes[effective_spec]
     if base is not None:
-        config.boxes[effective_spec].base = base
-
-    # CLI flag overrides
-    if ssh_agent:
-        config.boxes[effective_spec].ssh_agent = True
-    if git_config:
-        config.boxes[effective_spec].git_config = True
-    if podman:
-        config.boxes[effective_spec].podman = True
-    if podman_docker_socket:
-        config.boxes[effective_spec].podman_docker_socket = True
-    if clipboard:
-        config.boxes[effective_spec].clipboard = True
-    if network is not None:
-        config.boxes[effective_spec].network_mode = network.value
-    if memory:
-        if config.boxes[effective_spec].resources is None:
-            config.boxes[effective_spec].resources = ResourceLimits()
-        res = config.boxes[effective_spec].resources
-        assert res is not None
-        res.memory = memory
-    if cpus:
-        if config.boxes[effective_spec].resources is None:
-            config.boxes[effective_spec].resources = ResourceLimits()
-        res = config.boxes[effective_spec].resources
-        assert res is not None
-        res.cpus = cpus
-    if runtime_opt:
-        config.boxes[effective_spec].runtime = runtime_opt.value
-    _apply_cli_overrides(config, mount, port, device, env)
+        box_spec.base = base
+    _apply_cli_flags(
+        box_spec,
+        config,
+        ssh_agent=ssh_agent,
+        git_config=git_config,
+        podman=podman,
+        podman_docker_socket=podman_docker_socket,
+        clipboard=clipboard,
+        network=network,
+        memory=memory,
+        cpus=cpus,
+        runtime=runtime_opt,
+        mounts=mount,
+        ports=port,
+        devices=device,
+        envs=env,
+    )
 
     runtime = get_runtime(config.runtime)
     config.runtime = runtime.name
@@ -717,14 +700,56 @@ def _upgrade_tools(config: Config, project_dir: Path, runtime: ContainerRuntime)
     return runtime.run(spec) == 0
 
 
-def _apply_cli_overrides(
+def _apply_cli_flags(
+    target: Config | BoxSpec,
     config: Config,
-    mounts: list[str] | None,
-    ports: list[str] | None,
-    devices: list[str] | None,
-    envs: list[str] | None,
+    *,
+    ssh_agent: bool = False,
+    git_config: bool = False,
+    podman: bool = False,
+    podman_docker_socket: bool = False,
+    clipboard: bool = False,
+    network: NetworkMode | None = None,
+    memory: str | None = None,
+    cpus: float | None = None,
+    no_project: bool = False,
+    runtime: RuntimeChoice | None = None,
+    mounts: list[str] | None = None,
+    ports: list[str] | None = None,
+    devices: list[str] | None = None,
+    envs: list[str] | None = None,
 ) -> None:
-    """Merge ad-hoc CLI --mount, --port, --device, and --env values into config."""
+    """Apply CLI flag overrides to a target (Config or BoxSpec).
+
+    Boolean/scalar overrides go to `target`. List/env overrides always go to `config`
+    (since they're merged at the config level in container.py).
+    """
+    if ssh_agent:
+        target.ssh_agent = True
+    if git_config:
+        target.git_config = True
+    if podman:
+        target.podman = True
+    if podman_docker_socket:
+        target.podman_docker_socket = True
+    if clipboard:
+        target.clipboard = True
+    if network is not None:
+        target.network_mode = network.value
+    if memory:
+        if target.resources is None:
+            target.resources = ResourceLimits()
+        target.resources.memory = memory
+    if cpus:
+        if target.resources is None:
+            target.resources = ResourceLimits()
+        target.resources.cpus = cpus
+    if no_project:
+        target.mount_project = False
+    if runtime:
+        target.runtime = runtime.value
+
+    # List/env overrides always go to config
     if mounts:
         config.mounts.extend(mounts)
     if ports:
