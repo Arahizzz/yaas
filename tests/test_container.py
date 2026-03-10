@@ -148,13 +148,15 @@ class TestParseMountSpec:
         assert mount.source == str(tmp_path / "data")
         assert mount.target == "/data"
 
-    def test_home_expansion(self) -> None:
+    def test_home_expansion(self, tmp_path: Path) -> None:
         """Test parsing mount spec with home directory expansion."""
-        # ~ itself always exists
-        mount = _parse_mount_spec("~:/data", Path("/project"))
+        fake_home = tmp_path / "fakehome"
+        fake_home.mkdir()
+        with patch("yaas.container.Path.expanduser", return_value=fake_home):
+            mount = _parse_mount_spec("~:/data", Path("/project"))
 
         assert mount is not None
-        assert mount.source == str(Path.home())
+        assert mount.source == str(fake_home)
         assert mount.target == "/data"
 
 
@@ -166,9 +168,11 @@ class TestParseMountSpecMissing:
         result = _parse_mount_spec(f"{tmp_path}/nonexistent:/data", Path("/project"))
         assert result is None
 
-    def test_missing_home_source_returns_none(self) -> None:
+    def test_missing_home_source_returns_none(self, tmp_path: Path) -> None:
         """Non-existent ~ path returns None."""
-        result = _parse_mount_spec("~/.yaas_nonexistent_test_path", Path("/project"))
+        nonexistent = tmp_path / "fakehome" / ".yaas_nonexistent"
+        with patch("yaas.container.Path.expanduser", return_value=nonexistent):
+            result = _parse_mount_spec("~/.yaas_nonexistent_test_path", Path("/project"))
         assert result is None
 
     def test_missing_tool_mount_skipped_in_spec(
@@ -180,8 +184,10 @@ class TestParseMountSpecMissing:
         config.tools = {
             "claude": ToolConfig(mounts=["~/.yaas_nonexistent_test_path"]),
         }
+        nonexistent = tmp_path / "fakehome" / ".yaas_nonexistent_test_path"
 
-        spec = build_container_spec(config, tmp_path, ["bash"])
+        with patch("yaas.container.Path.expanduser", return_value=nonexistent):
+            spec = build_container_spec(config, tmp_path, ["bash"])
 
         targets = [m.target for m in spec.mounts]
         assert "/home/.yaas_nonexistent_test_path" not in targets
@@ -190,11 +196,17 @@ class TestParseMountSpecMissing:
 class TestParseMountSpecAutoDst:
     """Tests for _parse_mount_spec auto-destination with ~ paths."""
 
+    @staticmethod
+    def _fake_home(tmp_path: Path, rel: str) -> tuple[Path, object]:
+        """Create a fake home subdir and return (path, expanduser_patch)."""
+        src = tmp_path / rel
+        src.mkdir(parents=True, exist_ok=True)
+        return src, patch("yaas.container.Path.expanduser", return_value=src)
+
     def test_home_tilde_auto_dst(self, tmp_path: Path) -> None:
         """~/.x with no dst → auto-computes /home/.x."""
-        src = tmp_path / ".x"
-        src.mkdir()
-        with patch("yaas.container.Path.expanduser", return_value=src):
+        src, mock_eu = self._fake_home(tmp_path, ".x")
+        with mock_eu:
             mount = _parse_mount_spec("~/.x", Path("/project"))
 
         assert mount is not None
@@ -204,9 +216,8 @@ class TestParseMountSpecAutoDst:
 
     def test_home_tilde_auto_dst_readonly(self, tmp_path: Path) -> None:
         """~/.x:ro → auto-dst + read-only."""
-        src = tmp_path / ".x"
-        src.mkdir()
-        with patch("yaas.container.Path.expanduser", return_value=src):
+        src, mock_eu = self._fake_home(tmp_path, ".x")
+        with mock_eu:
             mount = _parse_mount_spec("~/.x:ro", Path("/project"))
 
         assert mount is not None
@@ -216,9 +227,8 @@ class TestParseMountSpecAutoDst:
 
     def test_home_tilde_nested_auto_dst(self, tmp_path: Path) -> None:
         """~/.x/ide:ro → auto-dst for nested path."""
-        src = tmp_path / ".x" / "ide"
-        src.mkdir(parents=True)
-        with patch("yaas.container.Path.expanduser", return_value=src):
+        src, mock_eu = self._fake_home(tmp_path, ".x/ide")
+        with mock_eu:
             mount = _parse_mount_spec("~/.x/ide:ro", Path("/project"))
 
         assert mount is not None
@@ -228,9 +238,8 @@ class TestParseMountSpecAutoDst:
 
     def test_home_tilde_explicit_dst(self, tmp_path: Path) -> None:
         """~/a:/data → explicit dst overrides auto-dst."""
-        src = tmp_path / "a"
-        src.mkdir()
-        with patch("yaas.container.Path.expanduser", return_value=src):
+        src, mock_eu = self._fake_home(tmp_path, "a")
+        with mock_eu:
             mount = _parse_mount_spec("~/a:/data", Path("/project"))
 
         assert mount is not None
@@ -240,9 +249,8 @@ class TestParseMountSpecAutoDst:
 
     def test_home_tilde_explicit_dst_readonly(self, tmp_path: Path) -> None:
         """~/a:/data:ro → explicit dst + read-only."""
-        src = tmp_path / "a"
-        src.mkdir()
-        with patch("yaas.container.Path.expanduser", return_value=src):
+        src, mock_eu = self._fake_home(tmp_path, "a")
+        with mock_eu:
             mount = _parse_mount_spec("~/a:/data:ro", Path("/project"))
 
         assert mount is not None
@@ -252,21 +260,22 @@ class TestParseMountSpecAutoDst:
 
     def test_custom_sandbox_home(self, tmp_path: Path) -> None:
         """Auto-dst uses custom sandbox_home when provided."""
-        src = tmp_path / ".config" / "app"
-        src.mkdir(parents=True)
-        with patch("yaas.container.Path.expanduser", return_value=src):
+        src, mock_eu = self._fake_home(tmp_path, ".config/app")
+        with mock_eu:
             mount = _parse_mount_spec("~/.config/app", Path("/project"), sandbox_home="/sandbox")
 
         assert mount is not None
         assert mount.source == str(src)
         assert mount.target == "/sandbox/.config/app"
 
-    def test_tilde_only(self) -> None:
+    def test_tilde_only(self, tmp_path: Path) -> None:
         """~ alone maps to sandbox home root."""
-        mount = _parse_mount_spec("~", Path("/project"))
+        src, mock_eu = self._fake_home(tmp_path, "fakehome")
+        with mock_eu:
+            mount = _parse_mount_spec("~", Path("/project"))
 
         assert mount is not None
-        assert mount.source == str(Path.home())
+        assert mount.source == str(src)
         assert mount.target == "/home"
 
 

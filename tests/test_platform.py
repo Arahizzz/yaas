@@ -1,7 +1,7 @@
 """Tests for platform detection module."""
 
 import os
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import mock_open, patch
@@ -166,13 +166,23 @@ class TestGetSshAgentSocket:
 class TestGetContainerSocketPaths:
     """Tests for container socket path detection."""
 
-    def test_linux_socket_paths(self) -> None:
-        """Test get_container_socket_paths returns Linux socket paths."""
+    @staticmethod
+    @contextmanager
+    def _mock_linux(extra_env: dict[str, str] | None = None, clear: bool = True):
+        """Mock Linux platform for socket path tests."""
+        env = {"HOME": "/home/testuser"}
+        if extra_env:
+            env.update(extra_env)
         with ExitStack() as stack:
             stack.enter_context(patch("yaas.platform.is_macos", return_value=False))
             stack.enter_context(patch("yaas.platform.is_linux", return_value=True))
             stack.enter_context(patch("yaas.platform.os.getuid", return_value=1000))
-            stack.enter_context(patch.dict(os.environ, {}, clear=True))
+            stack.enter_context(patch.dict(os.environ, env, clear=clear))
+            yield
+
+    def test_linux_socket_paths(self) -> None:
+        """Test get_container_socket_paths returns Linux socket paths."""
+        with self._mock_linux():
             paths = get_container_socket_paths()
 
         path_strs = [str(p) for p in paths]
@@ -183,11 +193,7 @@ class TestGetContainerSocketPaths:
 
     def test_linux_docker_only(self) -> None:
         """Test get_container_socket_paths with docker_only excludes Podman."""
-        with ExitStack() as stack:
-            stack.enter_context(patch("yaas.platform.is_macos", return_value=False))
-            stack.enter_context(patch("yaas.platform.is_linux", return_value=True))
-            stack.enter_context(patch("yaas.platform.os.getuid", return_value=1000))
-            stack.enter_context(patch.dict(os.environ, {}, clear=True))
+        with self._mock_linux():
             paths = get_container_socket_paths(docker_only=True)
 
         path_strs = [str(p) for p in paths]
@@ -199,11 +205,7 @@ class TestGetContainerSocketPaths:
 
     def test_linux_xdg_runtime_socket(self) -> None:
         """Test get_container_socket_paths includes XDG_RUNTIME_DIR socket."""
-        with ExitStack() as stack:
-            stack.enter_context(patch("yaas.platform.is_macos", return_value=False))
-            stack.enter_context(patch("yaas.platform.is_linux", return_value=True))
-            stack.enter_context(patch("yaas.platform.os.getuid", return_value=1000))
-            stack.enter_context(patch.dict(os.environ, {"XDG_RUNTIME_DIR": "/run/user/1000"}))
+        with self._mock_linux({"XDG_RUNTIME_DIR": "/run/user/1000"}, clear=False):
             paths = get_container_socket_paths()
 
         path_strs = [str(p) for p in paths]
@@ -211,12 +213,7 @@ class TestGetContainerSocketPaths:
 
     def test_docker_host_env_priority(self) -> None:
         """Test DOCKER_HOST env var takes highest priority."""
-        with ExitStack() as stack:
-            stack.enter_context(patch("yaas.platform.is_macos", return_value=False))
-            stack.enter_context(patch("yaas.platform.is_linux", return_value=True))
-            stack.enter_context(patch("yaas.platform.os.getuid", return_value=1000))
-            env = {"DOCKER_HOST": "unix:///custom/docker.sock"}
-            stack.enter_context(patch.dict(os.environ, env, clear=True))
+        with self._mock_linux({"DOCKER_HOST": "unix:///custom/docker.sock"}):
             paths = get_container_socket_paths()
 
         path_strs = [str(p) for p in paths]
