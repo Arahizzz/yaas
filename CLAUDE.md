@@ -68,3 +68,7 @@ src/yaas/
 - Line length 100 (ruff)
 - Dataclasses for structured data
 - Protocol-based abstractions for runtime independence
+
+## Testing
+
+- **Unit tests must NEVER depend on the host environment.** Tests must not read real config files, rely on real home directories, or depend on environment variables set on the developer's machine. Always mock/patch external state (e.g., `GLOBAL_CONFIG_PATH`, `Path.home()`, `os.environ`).

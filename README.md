@@ -252,14 +252,21 @@ YAAS uses a layered configuration system with two config files and per-tool over
 | Global config | `~/.config/yaas/config.toml` | All projects |
 | Project config | `.yaas.toml` in project root | Current project |
 
-Both files share the same format and can contain both top-level settings and `[tools.*]` sections. Values merge with later sources taking precedence:
+Both files share the same format and can contain both top-level settings and `[tools.*]` sections. Settings are applied in order:
 
 1. **Global config** — defaults for all projects
-2. **Project config** — overrides global settings for this project
+2. **Project config** — extends or overrides global settings for this project
 3. **Per-tool overrides** — `[tools.*]` sections override default settings when running that tool
 4. **CLI flags** — `--runtime`, `--network`, `--memory`, etc. override everything
 
-Tool definitions also merge field-by-field: if the global config defines `[tools.claude]` with `mounts` and `yolo_flags`, and the project `.yaas.toml` only sets `[tools.claude] network_mode = "none"`, the mounts and yolo_flags are preserved.
+**How fields merge between global and project config:**
+
+- **Scalar settings** (bools, strings like `ssh_agent`, `network_mode`): project **replaces** global.
+- **List fields** (`mounts`, `ports`, `devices`): project **extends** global — both lists are concatenated.
+- **Dict fields** (`env`): project **merges** into global — project keys win on conflict, global-only keys are preserved.
+- **Nested objects** (`resources`, `security`): field-level merge — only specified sub-fields are overridden.
+
+The same rules apply to `[tools.*]` sections: if both global and project config define `[tools.claude]`, their `mounts` are concatenated, `env` dicts are merged, and scalar fields like `network_mode` are replaced. Fields not mentioned in the project config are preserved from the global config. `command` and `yolo_flags` are exceptions — they are always replaced, not merged.
 
 ### All Options
 
