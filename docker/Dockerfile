@@ -1,4 +1,4 @@
-FROM fedora:42
+FROM fedora:latest
 
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
@@ -10,12 +10,11 @@ RUN dnf group install -y development-tools && dnf install -y \
     # Extra build tools not in the group
     cmake bc \
     # Development libraries (not in the group)
-    openssl-devel zlib-devel libxml2-devel libffi-devel libatomic \
+    openssl-devel libxml2-devel libffi-devel \
     # VCS extras (git is in the group)
-    git-lfs openssh-clients gnupg2 \
+    git-lfs \
     # Utilities
-    curl wget unzip zip xz zstd \
-    sudo less vim-minimal nano \
+    wget libicu nano \
     # Clipboard tools
     wl-clipboard xclip \
     # Podman DinD (baked in, no nix runtime install)
