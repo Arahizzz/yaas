@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -89,7 +90,15 @@ console = Console()
 
 
 @app.callback()
-def main_callback() -> None:
+def main_callback(
+    _cli_introspection: bool = typer.Option(
+        False,
+        "--cli-introspection",
+        help="Dump CLI schema as JSON and exit. Append to any command for its schema only.",
+        is_eager=True,
+        hidden=False,
+    ),
+) -> None:
     """Check platform support before running any command."""
     try:
         check_platform_support()
@@ -1120,8 +1129,42 @@ def worktree_repair() -> None:
         raise typer.Exit(1)
 
 
+def _handle_cli_introspection() -> None:
+    """Handle --cli-introspection flag: dump schema for the specified command path."""
+    import json
+
+    import click
+    import typer.main
+
+    from .schema import command_to_schema, generate_cli_schema
+
+    args = [a for a in sys.argv[1:] if a != "--cli-introspection"]
+
+    if not args:
+        print(json.dumps(generate_cli_schema(app), indent=2))  # noqa: T201
+        return
+
+    # Navigate the command tree following the provided path
+    root = typer.main.get_command(app)
+    cmd: click.Command | click.Group = root
+    name = root.name or "yaas"
+    for arg in args:
+        if not isinstance(cmd, click.Group):
+            break
+        sub = cmd.get_command(click.Context(cmd), arg)
+        if sub is None:
+            break
+        cmd = sub
+        name = arg
+
+    print(json.dumps(command_to_schema(cmd, name), indent=2))  # noqa: T201
+
+
 def main() -> None:
     """Entry point."""
+    if "--cli-introspection" in sys.argv:
+        _handle_cli_introspection()
+        return
     app()
 
 

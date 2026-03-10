@@ -36,7 +36,7 @@ dev = [
 ]
 
 [project.scripts]
-yaas = "yaas.cli:app"
+yaas = "yaas.cli:main"
 
 [build-system]
 requires = ["hatchling"]
