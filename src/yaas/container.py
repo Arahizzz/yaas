@@ -462,12 +462,13 @@ def _add_clipboard_support(mounts: list[Mount]) -> None:
     wayland_display = os.environ.get("WAYLAND_DISPLAY")
     xdg_runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
 
-    # Prefer Wayland if available - mount only the socket file (not whole dir)
-    # to leave /run/user/$UID writable for GPG sockets
+    # Mount sockets into /run/host/ staging area — the entrypoint symlinks
+    # them to the container's actual XDG_RUNTIME_DIR after UID setup.
     if wayland_display and xdg_runtime_dir:
         wayland_socket = Path(xdg_runtime_dir) / wayland_display
         if wayland_socket.exists():
-            mounts.append(Mount(str(wayland_socket), str(wayland_socket), read_only=True))
+            target = f"/run/host/{wayland_display}"
+            mounts.append(Mount(str(wayland_socket), target, read_only=True))
             return
 
     # Fall back to X11
@@ -475,7 +476,7 @@ def _add_clipboard_support(mounts: list[Mount]) -> None:
     if x_display:
         x11_socket = Path("/tmp/.X11-unix")
         if x11_socket.exists():
-            mounts.append(Mount(str(x11_socket), str(x11_socket), read_only=True))
+            mounts.append(Mount(str(x11_socket), "/run/host/.X11-unix", read_only=True))
             return
 
     logger.warning("No display server detected, clipboard won't work inside sandbox")
@@ -667,11 +668,10 @@ def _add_clipboard_environment(env: dict[str, str]) -> None:
     if not is_linux():
         return
 
-    # Wayland
+    # Wayland — don't forward XDG_RUNTIME_DIR (entrypoint sets it for the
+    # container's SHELL_UID; host value would be overwritten anyway)
     if wayland_display := os.environ.get("WAYLAND_DISPLAY"):
         env["WAYLAND_DISPLAY"] = wayland_display
-    if xdg_runtime_dir := os.environ.get("XDG_RUNTIME_DIR"):
-        env["XDG_RUNTIME_DIR"] = xdg_runtime_dir
 
     # X11
     if x_display := os.environ.get("DISPLAY"):

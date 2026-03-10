@@ -296,13 +296,14 @@ class TestClipboardSupport:
         with patch.dict(os.environ, env, clear=True):
             spec = build_container_spec(config, project_dir, ["bash"])
 
-        # Check environment variables are forwarded
+        # Check WAYLAND_DISPLAY is forwarded but XDG_RUNTIME_DIR is not
+        # (entrypoint sets XDG_RUNTIME_DIR for the container's SHELL_UID)
         assert spec.environment.get("WAYLAND_DISPLAY") == "wayland-0"
-        assert spec.environment.get("XDG_RUNTIME_DIR") == str(runtime_dir)
+        assert "XDG_RUNTIME_DIR" not in spec.environment
 
-        # Check wayland socket is mounted
+        # Check wayland socket is mounted into /run/host/ staging area
         mount_targets = [m.target for m in spec.mounts]
-        assert str(wayland_socket) in mount_targets
+        assert "/run/host/wayland-0" in mount_targets
 
     def test_x11_fallback(self, mock_linux, project_dir) -> None:
         """Test clipboard support with X11 display (fallback when no Wayland)."""
@@ -360,9 +361,9 @@ class TestClipboardSupport:
         assert "WAYLAND_DISPLAY" not in spec.environment
         assert "DISPLAY" not in spec.environment
 
-        # Runtime dir should NOT be mounted
+        # No host sockets should be mounted
         mount_targets = [m.target for m in spec.mounts]
-        assert str(runtime_dir) not in mount_targets
+        assert "/run/host/wayland-0" not in mount_targets
 
     def test_non_linux_silently_skipped(self, mock_macos, project_dir) -> None:
         """Test that clipboard is silently skipped on non-Linux."""
@@ -385,9 +386,9 @@ class TestClipboardSupport:
         assert "WAYLAND_DISPLAY" not in spec.environment
         assert "DISPLAY" not in spec.environment
 
-        # No display sockets should be mounted
+        # No host sockets should be mounted
         mount_targets = [m.target for m in spec.mounts]
-        assert str(runtime_dir) not in mount_targets
+        assert "/run/host/wayland-0" not in mount_targets
 
 
 class TestExtractRepoName:

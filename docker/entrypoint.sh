@@ -68,6 +68,15 @@ if [[ "$(stat -c '%u' "$XDG_RUNTIME_DIR")" != "$SHELL_UID" ]]; then
 fi
 chmod 700 "$XDG_RUNTIME_DIR"
 
+# Clipboard socket fixup: host sockets are mounted under /run/host/,
+# symlink them into the container's XDG_RUNTIME_DIR so wl-paste/xclip find them.
+if [[ -n "${WAYLAND_DISPLAY:-}" && -e "/run/host/${WAYLAND_DISPLAY}" ]]; then
+    ln -sf "/run/host/${WAYLAND_DISPLAY}" "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"
+fi
+if [[ -n "${DISPLAY:-}" && -d "/run/host/.X11-unix" ]]; then
+    ln -sfn "/run/host/.X11-unix" /tmp/.X11-unix
+fi
+
 # ============================================================
 # Volume ownership (only when process drops privileges)
 # ============================================================
