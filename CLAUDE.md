@@ -42,7 +42,14 @@ src/yaas/
 ├── cli.py          # Typer CLI entry point (yaas.cli:app)
 ├── config.py       # Two-level config loading (global + project)
 ├── container.py    # Container spec building and mount logic
-├── runtime.py      # Runtime abstraction (Podman/Docker)
+├── quadlet.py      # Podman quadlet .container file generation
+├── runtime/        # Runtime abstraction package
+│   ├── __init__.py # Re-exports + get_runtime()
+│   ├── types.py    # ContainerSpec, ExecSpec, Mount, Protocol
+│   ├── base.py     # BaseRuntime ABC with shared methods
+│   ├── podman.py   # PodmanRuntime
+│   ├── docker.py   # DockerRuntime
+│   └── krun.py     # PodmanKrunRuntime (libkrun MicroVM)
 ├── platform.py     # Cross-platform detection and compatibility
 ├── worktree.py     # Git worktree management
 └── data/mise.toml  # Default tool configuration
@@ -50,8 +57,8 @@ src/yaas/
 
 ### Key Design Patterns
 
-- **Runtime Protocol**: `runtime.py` defines a protocol that both `PodmanRuntime` and `DockerRuntime` implement. Add new runtimes by implementing this protocol.
-- **Container Specs**: `container.py` builds dataclass-based specs that runtimes translate to CLI commands. Three builders: `build_container_spec()`, `build_clone_spec()`, `build_clone_work_spec()`.
+- **Runtime Protocol**: `runtime/types.py` defines a protocol that `PodmanRuntime`, `DockerRuntime`, and `PodmanKrunRuntime` implement. `BaseRuntime` ABC provides shared logic via template method pattern.
+- **Container Specs**: `container.py` builds dataclass-based specs that runtimes translate to CLI commands. Two builders: `build_container_spec()` (ephemeral) and `build_box_spec()` (persistent).
 - **Config Hierarchy**: Global config at `~/.config/yaas/config.toml`, project overrides in `.yaas.toml`. Merged in `config.py`.
 - **Platform Abstraction**: All platform-specific logic (socket paths, UID handling, clipboard) is isolated in `platform.py`.
 
