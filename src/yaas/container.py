@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import os
 import shutil
-from dataclasses import replace
 from importlib import resources
 from pathlib import Path
 
-from .config import Config, resolve_effective_config
+from .config import Config, resolve_box_config, resolve_effective_config
 from .constants import (
-    CLONE_WORKSPACE,
     HOME_VOLUME,
     MISE_CONFIG_PATH,
     NIX_VOLUME,
@@ -43,118 +41,102 @@ LXCFS_PROC_FILES = (
 )
 
 
-def extract_repo_name(url: str) -> str:
-    """Extract repository name from a git URL.
-
-    Handles both HTTPS and SSH URLs:
-    - https://github.com/user/repo.git -> repo
-    - git@github.com:user/repo.git -> repo
-    - https://github.com/user/repo -> repo
-
-    Raises:
-        ValueError: If URL is empty or repo name cannot be extracted
-    """
-    if not url or not url.strip():
-        raise ValueError("Empty repository URL")
-
-    # Strip whitespace and trailing slashes
-    url = url.strip().rstrip("/")
-
-    # Remove query parameters and fragments
-    for sep in ("?", "#"):
-        if sep in url:
-            url = url.split(sep, 1)[0]
-
-    # Remove trailing .git if present
-    if url.endswith(".git"):
-        url = url[:-4]
-
-    # Extract the last path component
-    if "/" in url:
-        name = url.rsplit("/", 1)[-1]
-    elif ":" in url:
-        # SSH format: git@github.com:user/repo
-        name = url.rsplit(":", 1)[-1].rsplit("/", 1)[-1]
-    else:
-        name = url
-
-    if not name:
-        raise ValueError(f"Could not extract repository name from URL: {url}")
-
-    return name
-
-
-def build_clone_spec(
+def build_box_spec(
     config: Config,
-    clone_url: str,
-    clone_volume: str,
-    repo_name: str,
-    ref: str | None = None,
+    box_name: str,
+    container_name: str,
 ) -> ContainerSpec:
-    """Build container spec for cloning a git repository.
+    """Build container spec for a persistent box.
 
-    This creates a minimal container that runs git clone into the ephemeral volume.
-    Always has network access (even if config.no_network is True) since it needs
-    to fetch from remote.
+    Creates a container with sleep infinity as entrypoint + --init for
+    proper signal handling. The box can then be exec'd into.
 
     Args:
-        config: Configuration object
-        clone_url: Git repository URL to clone
-        clone_volume: Name of the volume to clone into
-        repo_name: Name of the repository (used for subdirectory)
-        ref: Optional git ref (tag or branch) to checkout via --branch
+        config: Configuration object (will be resolved via resolve_box_config)
+        box_name: Box spec name from config
+        container_name: Container name to assign
     """
+    config = resolve_box_config(config, box_name)
+    box = config.boxes.get(box_name)
+
     uid, gid = get_uid_gid()
+    home = Path.home()
     sandbox_home = "/home"
 
-    mounts: list[Mount] = []
+    # Determine entrypoint/command
+    entrypoint = box.entrypoint if box and box.entrypoint else ["sleep", "infinity"]
+    command = list(box.command) if box and box.command else []
 
-    # Mount the clone volume at workspace
-    mounts.append(Mount(clone_volume, CLONE_WORKSPACE, type="volume"))
+    skip_shared_volumes = config.base == "none"
 
-    # SSH agent for private repos
-    if config.ssh_agent:
-        _add_ssh_agent(mounts)
+    # Build mounts
+    effective_project_dir = Path.cwd() if config.mount_project else None
+    mounts, groups = _build_mounts(
+        config,
+        effective_project_dir,
+        home,
+        sandbox_home,
+        skip_shared_volumes=skip_shared_volumes,
+    )
 
-    environment: dict[str, str] = {
-        "HOME": sandbox_home,
-    }
-
-    # SSH agent environment
-    if config.ssh_agent and get_ssh_agent_socket():
-        environment["SSH_AUTH_SOCK"] = "/ssh-agent"
-
-    # Forward TERM
-    if term := os.environ.get("TERM"):
-        environment["TERM"] = term
+    # Build environment
+    environment = _build_environment(config, effective_project_dir, sandbox_home)
 
     container_user = f"{uid}:{gid}"
-    clone_path = f"{CLONE_WORKSPACE}/{repo_name}"
+    working_dir = str(effective_project_dir) if effective_project_dir else sandbox_home
 
-    # Build git clone command
-    clone_cmd = ["git", "clone", "--depth", "1"]
-    if ref:
-        clone_cmd.extend(["--branch", ref])
-    clone_cmd.extend([clone_url, clone_path])
+    # Labels for tracking
+    labels = {
+        "yaas.box.spec": box_name,
+    }
+
+    # Collect ports/devices
+    ports = list(config.ports)
+    devices = list(config.devices)
+
+    # Security
+    capabilities = (
+        list(config.security.capabilities) if config.security.capabilities is not None else None
+    )
+    seccomp_profile = config.security.seccomp_profile
+    privileged = False
+
+    # Podman DinD
+    podman_enabled = config.podman or config.podman_docker_socket
+    if podman_enabled:
+        privileged = True
+        if "/dev/fuse" not in devices:
+            devices.append("/dev/fuse")
+        mounts.append(Mount(source="yaas-podman-data", target="/var/lib/containers", type="volume"))
+        environment["YAAS_PODMAN"] = "1"
+    if config.podman_docker_socket:
+        environment["YAAS_PODMAN_DOCKER_SOCKET"] = "1"
 
     return ContainerSpec(
         image=RUNTIME_IMAGE,
-        command=clone_cmd,
-        working_dir=CLONE_WORKSPACE,
+        command=command,
+        working_dir=working_dir,
         user=container_user,
         environment=environment,
         mounts=mounts,
-        network_mode=None,  # Always need network for cloning
+        network_mode=config.network_mode,
         tty=False,
         stdin_open=False,
-        # Resource limits from config
+        name=container_name,
+        entrypoint=entrypoint,
+        init=True,
+        labels=labels,
+        groups=groups or None,
+        pid_mode=config.pid_mode,
+        ports=ports or None,
+        devices=devices or None,
         memory=config.resources.memory,
         memory_swap=config.resources.memory_swap,
         cpus=config.resources.cpus,
         pids_limit=config.resources.pids_limit,
-        # Security
-        capabilities=config.security.capabilities,
-        seccomp_profile=config.security.seccomp_profile,
+        privileged=privileged,
+        capabilities=capabilities,
+        seccomp_profile=seccomp_profile,
     )
 
 
@@ -208,7 +190,9 @@ def build_container_spec(
             devices.extend(tool.devices)
 
     # Resolve security (start from config, may be overridden by podman mode)
-    capabilities = list(config.security.capabilities) if config.security.capabilities else None
+    capabilities = (
+        list(config.security.capabilities) if config.security.capabilities is not None else None
+    )
     seccomp_profile = config.security.seccomp_profile
     privileged = False
 
@@ -256,34 +240,6 @@ def build_container_spec(
         capabilities=capabilities,
         seccomp_profile=seccomp_profile,
     )
-
-
-def build_clone_work_spec(
-    config: Config,
-    clone_volume: str,
-    repo_name: str,
-    command: list[str],
-    *,
-    tty: bool = True,
-    stdin_open: bool = True,
-) -> ContainerSpec:
-    """Build container spec for working in a cloned repository.
-
-    This is used for the work container in clone mode, after the repo has been
-    cloned into the ephemeral volume. Delegates to build_container_spec with
-    no project mount, then prepends the clone volume and adjusts the working dir.
-    """
-    working_dir = f"{CLONE_WORKSPACE}/{repo_name}"
-
-    spec = build_container_spec(
-        config, None, command, tty=tty, stdin_open=stdin_open,
-    )
-
-    # Prepend clone volume mount and override working dir / project env
-    clone_mount = Mount(clone_volume, CLONE_WORKSPACE, type="volume")
-    env = {**spec.environment, "PROJECT_PATH": working_dir}
-    mounts = [clone_mount, *spec.mounts]
-    return replace(spec, working_dir=working_dir, mounts=mounts, environment=env)
 
 
 def _add_worktree_mounts(
@@ -362,6 +318,8 @@ def _build_mounts(
     project_dir: Path | None,
     home: Path,
     sandbox_home: str,
+    *,
+    skip_shared_volumes: bool = False,
 ) -> tuple[list[Mount], list[int]]:
     """Assemble all mounts and supplementary groups."""
     mounts: list[Mount] = []
@@ -383,7 +341,15 @@ def _build_mounts(
 
     # Add optional mounts
     fallback_dir = project_dir or Path.cwd()
-    _add_optional_mounts(config, mounts, groups, home, sandbox_home, fallback_dir)
+    _add_optional_mounts(
+        config,
+        mounts,
+        groups,
+        home,
+        sandbox_home,
+        fallback_dir,
+        skip_shared_volumes=skip_shared_volumes,
+    )
 
     # lxcfs mounts for resource visibility
     _add_lxcfs_mounts(config, mounts)
@@ -403,6 +369,8 @@ def _add_optional_mounts(
     home: Path,
     sandbox_home: str,
     project_dir: Path,
+    *,
+    skip_shared_volumes: bool = False,
 ) -> None:
     """Add optional mounts based on config (git, SSH, clipboard, mise, tool mounts).
 
@@ -410,7 +378,7 @@ def _add_optional_mounts(
     bind mounts for config files overlay on top of it.
     """
     # Home volume first — bind mounts below overlay specific paths within it
-    _add_mise_support(mounts)
+    _add_mise_support(mounts, skip_shared_volumes=skip_shared_volumes)
 
     if config.git_config:
         _add_git_config_mounts(mounts, home, sandbox_home)
@@ -444,7 +412,6 @@ def _add_ssh_agent(mounts: list[Mount]) -> None:
     known_hosts = Path.home() / ".ssh" / "known_hosts"
     if known_hosts.exists():
         mounts.append(Mount(str(known_hosts), "/etc/ssh/ssh_known_hosts", read_only=True))
-
 
 
 def _add_clipboard_support(mounts: list[Mount]) -> None:
@@ -482,9 +449,12 @@ def _add_clipboard_support(mounts: list[Mount]) -> None:
     logger.warning("No display server detected, clipboard won't work inside sandbox")
 
 
-def _add_mise_support(mounts: list[Mount]) -> None:
+def _add_mise_support(mounts: list[Mount], *, skip_shared_volumes: bool = False) -> None:
     """Add mise volumes and config mount for tool management."""
     sandbox_home = "/home"
+
+    if skip_shared_volumes:
+        return
 
     # Named volumes for persistence between runs
     mounts.append(Mount(HOME_VOLUME, sandbox_home, type="volume"))
@@ -520,7 +490,9 @@ def _add_git_config_mounts(
 
 
 def _build_preamble(
-    config: Config, project_dir: Path | None, mounts: list[Mount],
+    config: Config,
+    project_dir: Path | None,
+    mounts: list[Mount],
 ) -> str:
     """Generate a sandbox preamble describing the container environment."""
     lines = [
