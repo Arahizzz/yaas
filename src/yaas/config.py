@@ -91,11 +91,9 @@ class BoxSpec(ContainerSettings):
 
     Similar to ToolConfig but for persistent containers.
     - command: container command (default: ["sleep", "infinity"])
-    - shell: default shell for `yaas box enter` (default: ["bash"])
     """
 
     command: list[str] = field(default_factory=list)
-    shell: list[str] | None = None  # Default: ["bash"]
 
 
 @dataclass
@@ -436,8 +434,8 @@ _TOOL_LIST_FIELDS = ("command", "yolo_flags", "mounts", "ports", "devices")
 _TOOL_REPLACE_FIELDS = frozenset({"command", "yolo_flags"})
 _TOOL_EXTEND_FIELDS = frozenset({"mounts", "ports", "devices"})
 
-_BOX_LIST_FIELDS = ("command", "shell", "mounts", "ports", "devices")
-_BOX_REPLACE_FIELDS = frozenset({"command", "shell"})
+_BOX_LIST_FIELDS = ("command", "mounts", "ports", "devices")
+_BOX_REPLACE_FIELDS = frozenset({"command"})
 _BOX_EXTEND_FIELDS = frozenset({"mounts", "ports", "devices"})
 
 

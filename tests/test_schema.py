@@ -169,7 +169,7 @@ class TestGenerateCliSchema:
         box = schema["commands"]["box"]
         subs = box["subcommands"]
         assert "create" in subs
-        assert "enter" in subs
+        assert "exec" in subs
         assert "list" in subs
         assert "remove" in subs
 

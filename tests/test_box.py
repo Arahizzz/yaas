@@ -41,7 +41,6 @@ class TestBoxSpec:
     def test_defaults(self) -> None:
         box = BoxSpec()
         assert box.command == []
-        assert box.shell is None
         assert box.base is None
         assert box.ssh_agent is None
         assert box.git_config is None
@@ -49,11 +48,9 @@ class TestBoxSpec:
     def test_custom_fields(self) -> None:
         box = BoxSpec(
             command=["sleep", "infinity"],
-            shell=["zsh"],
             ssh_agent=True,
         )
         assert box.command == ["sleep", "infinity"]
-        assert box.shell == ["zsh"]
         assert box.ssh_agent is True
 
 
@@ -79,10 +76,9 @@ class TestBoxConfigParsing:
         assert config.boxes["shell"].git_config is True
 
     def test_box_with_command(self) -> None:
-        config = _load_toml('[box.custom]\ncommand = ["tail", "-f", "/dev/null"]\nshell = ["zsh"]')
+        config = _load_toml('[box.custom]\ncommand = ["tail", "-f", "/dev/null"]')
         box = config.boxes["custom"]
         assert box.command == ["tail", "-f", "/dev/null"]
-        assert box.shell == ["zsh"]
 
     def test_box_with_base(self) -> None:
         config = _load_toml('[box.hardened]\nbase = "none"\nnetwork_mode = "none"')
@@ -105,11 +101,6 @@ class TestBoxConfigParsing:
     def test_box_with_mounts(self) -> None:
         config = _load_toml('[box.dev]\nmounts = ["~/.config/app"]')
         assert config.boxes["dev"].mounts == ["~/.config/app"]
-
-    def test_invalid_shell_skipped(self) -> None:
-        """Non-list shell value causes the box spec to be skipped."""
-        config = _load_toml('[box.bad]\nshell = "bash"')
-        assert "bad" not in config.boxes
 
     def test_non_table_skipped(self) -> None:
         config = _load_toml('box = { bad = "string" }')

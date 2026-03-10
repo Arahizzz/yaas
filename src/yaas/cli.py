@@ -499,7 +499,7 @@ def box_create(
             f"\n  systemctl --user daemon-reload && systemctl --user start {container_name}"
             f"\n  systemctl daemon-reload && systemctl start {container_name}  (rootful)"
             f"\nManage with:"
-            f"\n  yaas box enter {name} / yaas box exec {name} -- <cmd>"
+            f"\n  yaas box exec {name} bash / yaas box exec {name} -- <cmd>"
             f"\n  systemctl [--user] stop/start/restart {container_name}"
             f"\n  https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html[/]",
         )
@@ -524,7 +524,7 @@ def box_create(
         raise typer.Exit(1)
 
     console.print(f"[green]Box '{name}' created and running.[/]")
-    console.print(f"[dim]Enter with: yaas box enter {name}[/]")
+    console.print(f"[dim]Enter with: yaas box exec {name} bash[/]")
 
 
 @box_app.command(name="config")
@@ -593,40 +593,6 @@ def box_config(
     _print_container_spec(container_spec)
 
 
-@box_app.command(name="enter")
-def box_enter(
-    name: str = typer.Argument(..., help="Box name"),
-) -> None:
-    """Enter a running box with an interactive shell."""
-    project_dir = Path.cwd()
-    config = load_config(project_dir)
-    runtime = get_runtime(config.runtime)
-    container_name = _box_container_name(name)
-
-    # Check container exists
-    info = runtime.inspect_container(container_name)
-    if info is None:
-        console.print(f"[red]Box '{name}' not found[/]")
-        raise typer.Exit(1)
-
-    # Determine shell from spec
-    shell_cmd = ["bash"]
-    spec_name = _get_box_label(info, "yaas.box.spec")
-    if spec_name:
-        box_spec = config.boxes.get(spec_name)
-        if box_spec and box_spec.shell:
-            shell_cmd = list(box_spec.shell)
-
-    exec_spec = ExecSpec(
-        container_name=container_name,
-        command=shell_cmd,
-        tty=stdin_is_tty(),
-        stdin_open=True,
-    )
-    exit_code = runtime.exec_container(exec_spec)
-    raise typer.Exit(exit_code)
-
-
 @box_app.command(
     name="exec",
     context_settings={
@@ -639,9 +605,8 @@ def box_exec(
     ctx: typer.Context,
     name: str = typer.Argument(..., help="Box name"),
 ) -> None:
-    """Execute a command in a running box."""
-    if not ctx.args:
-        raise typer.BadParameter("Missing command to run")
+    """Execute a command in a running box (defaults to bash if no command given)."""
+    args = ctx.args or ["bash"]
 
     config = load_config(Path.cwd())
     runtime = get_runtime(config.runtime)
@@ -652,9 +617,12 @@ def box_exec(
         console.print(f"[red]Box '{name}' not found[/]")
         raise typer.Exit(1)
 
+    # Wrap in login shell for mise/nix activation via profile.d
+    command = ["bash", "--login", "-c", 'exec "$@"', "--", *args]
+
     exec_spec = ExecSpec(
         container_name=container_name,
-        command=ctx.args,
+        command=command,
         tty=stdin_is_tty(),
         stdin_open=True,
     )

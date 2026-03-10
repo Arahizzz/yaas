@@ -129,11 +129,10 @@ env = { ANTHROPIC_API_KEY = true, IS_SANDBOX = "1" }
 
 # Box specs (persistent containers)
 # Each box spec defines a persistent container environment.
-# Usage: yaas box create <name> <spec>, then yaas box enter <name>
+# Usage: yaas box create <name> <spec>, then yaas box exec <name> bash
 #
 # Box-specific fields:
 # - command: container command (default: ["sleep", "infinity"])
-# - shell: default shell for `yaas box enter` (default: ["bash"])
 # - base: config inheritance ("default", "minimal", "none")
 #
 # Boxes also support all container settings (ssh_agent, git_config, etc.)
