@@ -209,7 +209,7 @@ class BaseRuntime(ABC):
         cmd = self._build_create_command(spec)
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            logger.debug(f"Failed to create container: {result.stderr}")
+            logger.warning(f"Failed to create container: {result.stderr.strip()}")
         return result.returncode == 0
 
     def start_container(self, name: str) -> bool:
@@ -217,7 +217,7 @@ class BaseRuntime(ABC):
             [*self.command_prefix, "start", name], capture_output=True, text=True
         )
         if result.returncode != 0:
-            logger.debug(f"Failed to start container {name}: {result.stderr}")
+            logger.warning(f"Failed to start container {name}: {result.stderr.strip()}")
         return result.returncode == 0
 
     def stop_container(self, name: str) -> bool:
@@ -225,7 +225,7 @@ class BaseRuntime(ABC):
             [*self.command_prefix, "stop", name], capture_output=True, text=True
         )
         if result.returncode != 0:
-            logger.debug(f"Failed to stop container {name}: {result.stderr}")
+            logger.warning(f"Failed to stop container {name}: {result.stderr.strip()}")
         return result.returncode == 0
 
     def remove_container(self, name: str, force: bool = False) -> bool:
@@ -235,7 +235,7 @@ class BaseRuntime(ABC):
         cmd.append(name)
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            logger.debug(f"Failed to remove container {name}: {result.stderr}")
+            logger.warning(f"Failed to remove container {name}: {result.stderr.strip()}")
         return result.returncode == 0
 
     def exec_container(self, spec: ExecSpec) -> int:
