@@ -40,7 +40,6 @@ class TestBoxSpec:
 
     def test_defaults(self) -> None:
         box = BoxSpec()
-        assert box.entrypoint is None
         assert box.command == []
         assert box.shell is None
         assert box.base is None
@@ -49,13 +48,11 @@ class TestBoxSpec:
 
     def test_custom_fields(self) -> None:
         box = BoxSpec(
-            entrypoint=["sleep", "infinity"],
-            command=["--verbose"],
+            command=["sleep", "infinity"],
             shell=["zsh"],
             ssh_agent=True,
         )
-        assert box.entrypoint == ["sleep", "infinity"]
-        assert box.command == ["--verbose"]
+        assert box.command == ["sleep", "infinity"]
         assert box.shell == ["zsh"]
         assert box.ssh_agent is True
 
@@ -81,10 +78,10 @@ class TestBoxConfigParsing:
         assert config.boxes["shell"].ssh_agent is True
         assert config.boxes["shell"].git_config is True
 
-    def test_box_with_entrypoint(self) -> None:
-        config = _load_toml('[box.custom]\nentrypoint = ["sleep", "infinity"]\nshell = ["zsh"]')
+    def test_box_with_command(self) -> None:
+        config = _load_toml('[box.custom]\ncommand = ["tail", "-f", "/dev/null"]\nshell = ["zsh"]')
         box = config.boxes["custom"]
-        assert box.entrypoint == ["sleep", "infinity"]
+        assert box.command == ["tail", "-f", "/dev/null"]
         assert box.shell == ["zsh"]
 
     def test_box_with_base(self) -> None:
@@ -112,10 +109,6 @@ class TestBoxConfigParsing:
     def test_invalid_shell_skipped(self) -> None:
         """Non-list shell value causes the box spec to be skipped."""
         config = _load_toml('[box.bad]\nshell = "bash"')
-        assert "bad" not in config.boxes
-
-    def test_invalid_entrypoint_skipped(self) -> None:
-        config = _load_toml('[box.bad]\nentrypoint = "sleep"')
         assert "bad" not in config.boxes
 
     def test_non_table_skipped(self) -> None:
@@ -276,17 +269,17 @@ class TestBuildBoxSpec:
 
         assert spec.image == RUNTIME_IMAGE
         assert spec.name == "yaas-box-mybox"
-        assert spec.entrypoint == ["sleep", "infinity"]
-        assert spec.command == []
+        assert spec.entrypoint is None
+        assert spec.command == ["sleep", "infinity"]
         assert spec.init is True
         assert spec.tty is False
         assert spec.stdin_open is False
         assert spec.labels["yaas.box.spec"] == "shell"
 
-    def test_custom_entrypoint(self, mock_linux, clean_env) -> None:
-        config = Config(boxes={"custom": BoxSpec(entrypoint=["tail", "-f", "/dev/null"])})
+    def test_custom_command(self, mock_linux, clean_env) -> None:
+        config = Config(boxes={"custom": BoxSpec(command=["tail", "-f", "/dev/null"])})
         spec = build_box_spec(config, "custom", "yaas-box-test")
-        assert spec.entrypoint == ["tail", "-f", "/dev/null"]
+        assert spec.command == ["tail", "-f", "/dev/null"]
 
     def test_no_project_mount_by_default(self, mock_linux, clean_env) -> None:
         config = Config(boxes={"shell": BoxSpec()})

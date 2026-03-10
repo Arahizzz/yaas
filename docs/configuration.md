@@ -139,8 +139,7 @@ ssh_agent = true
 git_config = true
 clipboard = true
 shell = ["zsh"]                    # Shell for `yaas box enter` (default: bash)
-# entrypoint = ["sleep", "infinity"]  # Default, override for custom init
-# command = []                        # Args to entrypoint
+# command = ["sleep", "infinity"]     # Default, override for custom init process
 
 [box.hardened]
 base = "none"                      # Skip global config inheritance

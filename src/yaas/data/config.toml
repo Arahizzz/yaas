@@ -132,8 +132,7 @@ env = { ANTHROPIC_API_KEY = true, IS_SANDBOX = "1" }
 # Usage: yaas box create <name> <spec>, then yaas box enter <name>
 #
 # Box-specific fields:
-# - entrypoint: init process (default: ["sleep", "infinity"])
-# - command: args to entrypoint (default: [])
+# - command: container command (default: ["sleep", "infinity"])
 # - shell: default shell for `yaas box enter` (default: ["bash"])
 # - base: config inheritance ("default", "minimal", "none")
 #

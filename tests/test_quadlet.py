@@ -10,7 +10,7 @@ def _make_spec(**overrides: object) -> ContainerSpec:
     """Create a minimal ContainerSpec with sensible box defaults."""
     defaults: dict[str, object] = {
         "image": "ghcr.io/arahizzz/yaas/runtime:latest",
-        "command": [],
+        "command": ["sleep", "infinity"],
         "working_dir": "/home",
         "user": "1000:1000",
         "environment": {
@@ -25,7 +25,6 @@ def _make_spec(**overrides: object) -> ContainerSpec:
         "tty": False,
         "stdin_open": False,
         "name": "yaas-box-test",
-        "entrypoint": ["sleep", "infinity"],
         "init": True,
         "labels": {"yaas.box.spec": "shell"},
     }
@@ -63,6 +62,11 @@ class TestGenerateQuadlet:
         spec = _make_spec(entrypoint=["/bin/sh", "-c", "echo hello world"])
         output = generate_quadlet(spec)
         assert "Entrypoint=/bin/sh -c 'echo hello world'" in output
+
+    def test_exec_with_default_command(self) -> None:
+        spec = _make_spec()
+        output = generate_quadlet(spec)
+        assert "Exec=sleep infinity" in output
 
     def test_no_exec_when_empty_command(self) -> None:
         spec = _make_spec(command=[])

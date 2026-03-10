@@ -90,13 +90,10 @@ class BoxSpec(ContainerSettings):
     """Configuration for a persistent box (e.g., shell, hardened).
 
     Similar to ToolConfig but for persistent containers.
-    Uses Docker entrypoint/command semantics:
-    - entrypoint: init process (default: ["sleep", "infinity"])
-    - command: args to entrypoint (default: [])
+    - command: container command (default: ["sleep", "infinity"])
     - shell: default shell for `yaas box enter` (default: ["bash"])
     """
 
-    entrypoint: list[str] | None = None  # Default: ["sleep", "infinity"]
     command: list[str] = field(default_factory=list)
     shell: list[str] | None = None  # Default: ["bash"]
 
@@ -439,8 +436,8 @@ _TOOL_LIST_FIELDS = ("command", "yolo_flags", "mounts", "ports", "devices")
 _TOOL_REPLACE_FIELDS = frozenset({"command", "yolo_flags"})
 _TOOL_EXTEND_FIELDS = frozenset({"mounts", "ports", "devices"})
 
-_BOX_LIST_FIELDS = ("entrypoint", "command", "shell", "mounts", "ports", "devices")
-_BOX_REPLACE_FIELDS = frozenset({"entrypoint", "command", "shell"})
+_BOX_LIST_FIELDS = ("command", "shell", "mounts", "ports", "devices")
+_BOX_REPLACE_FIELDS = frozenset({"command", "shell"})
 _BOX_EXTEND_FIELDS = frozenset({"mounts", "ports", "devices"})
 
 

@@ -48,8 +48,9 @@ def build_box_spec(
 ) -> ContainerSpec:
     """Build container spec for a persistent box.
 
-    Creates a container with sleep infinity as entrypoint + --init for
-    proper signal handling. The box can then be exec'd into.
+    Creates a persistent container with sleep infinity as the default command
+    and --init for proper signal handling. The image entrypoint.sh runs first
+    to set up UID mapping, mise, sockets, etc. The box can then be exec'd into.
 
     Args:
         config: Configuration object (will be resolved via resolve_box_config)
@@ -63,9 +64,8 @@ def build_box_spec(
     home = Path.home()
     sandbox_home = "/home"
 
-    # Determine entrypoint/command
-    entrypoint = box.entrypoint if box and box.entrypoint else ["sleep", "infinity"]
-    command = list(box.command) if box and box.command else []
+    # Determine command (passed as CMD to the image's entrypoint.sh)
+    command = list(box.command) if box and box.command else ["sleep", "infinity"]
 
     skip_shared_volumes = config.base == "none"
 
@@ -124,7 +124,6 @@ def build_box_spec(
         tty=False,
         stdin_open=False,
         name=container_name,
-        entrypoint=entrypoint,
         init=True,
         labels=labels,
         groups=groups or None,
