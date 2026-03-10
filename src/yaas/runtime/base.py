@@ -259,20 +259,27 @@ class BaseRuntime(ABC):
         )
         if result.returncode != 0:
             return []
-        try:
-            # Podman outputs one JSON object per line; Docker outputs a JSON array
-            lines = result.stdout.strip().splitlines()
-            containers: list[dict[str, Any]] = []
-            for line in lines:
-                if line.strip():
-                    parsed = json.loads(line)
-                    if isinstance(parsed, list):
-                        containers.extend(parsed)
-                    else:
-                        containers.append(parsed)
-            return containers
-        except json.JSONDecodeError:
+        output = result.stdout.strip()
+        if not output:
             return []
+        try:
+            # Try parsing as a single JSON value first (array or object)
+            parsed = json.loads(output)
+            if isinstance(parsed, list):
+                return parsed
+            return [parsed]
+        except json.JSONDecodeError:
+            pass
+        # Fallback: Podman sometimes outputs one JSON object per line
+        containers: list[dict[str, Any]] = []
+        for line in output.splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    containers.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return containers
 
     def inspect_container(self, name: str) -> dict[str, Any] | None:
         result = subprocess.run(
