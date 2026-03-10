@@ -5,46 +5,57 @@ from __future__ import annotations
 import json
 
 import click
+from toon_format import decode as toon_decode
 
 from yaas.schema import (
-    click_type_to_json,
+    _click_type_enum,
+    _click_type_name,
     command_to_schema,
+    dump_cli_schema,
+    dump_command_schema,
     generate_cli_schema,
     param_to_schema,
 )
 
 
-class TestClickTypeToJson:
+class TestClickTypeName:
     def test_string(self) -> None:
-        assert click_type_to_json(click.STRING) == {"type": "string"}
+        assert _click_type_name(click.STRING) == "string"
 
     def test_int(self) -> None:
-        assert click_type_to_json(click.INT) == {"type": "integer"}
+        assert _click_type_name(click.INT) == "integer"
 
     def test_float(self) -> None:
-        assert click_type_to_json(click.FLOAT) == {"type": "number"}
+        assert _click_type_name(click.FLOAT) == "number"
 
     def test_bool(self) -> None:
-        assert click_type_to_json(click.BOOL) == {"type": "boolean"}
+        assert _click_type_name(click.BOOL) == "boolean"
 
     def test_choice(self) -> None:
-        result = click_type_to_json(click.Choice(["a", "b", "c"]))
-        assert result == {"type": "string", "enum": ["a", "b", "c"]}
+        assert _click_type_name(click.Choice(["a", "b"])) == "string"
 
     def test_unknown_type_falls_back_to_string(self) -> None:
-        assert click_type_to_json(click.Path()) == {"type": "string"}
+        assert _click_type_name(click.Path()) == "string"
+
+
+class TestClickTypeEnum:
+    def test_choice(self) -> None:
+        assert _click_type_enum(click.Choice(["a", "b", "c"])) == "a|b|c"
+
+    def test_non_choice_returns_none(self) -> None:
+        assert _click_type_enum(click.STRING) is None
 
 
 class TestParamToSchema:
-    def test_option(self) -> None:
+    def test_option_flat_structure(self) -> None:
         param = click.Option(["--name", "-n"], type=click.STRING, help="A name")
         schema = param_to_schema(param)
         assert schema["name"] == "name"
         assert schema["kind"] == "option"
-        assert schema["type"] == {"type": "string"}
+        assert schema["type"] == "string"
+        assert schema["enum"] is None
         assert schema["is_flag"] is False
-        assert "--name" in schema["opts"]
-        assert "-n" in schema["opts"]
+        assert schema["opts"] == "--name|-n"
         assert schema["help"] == "A name"
 
     def test_flag(self) -> None:
@@ -53,24 +64,37 @@ class TestParamToSchema:
         assert schema["is_flag"] is True
         assert schema["default"] is False
 
-    def test_argument(self) -> None:
+    def test_argument_has_all_keys(self) -> None:
         param = click.Argument(["filename"], type=click.STRING, required=True)
         schema = param_to_schema(param)
         assert schema["name"] == "filename"
         assert schema["kind"] == "argument"
         assert schema["required"] is True
-        assert "opts" not in schema
-        assert "is_flag" not in schema
+        assert schema["opts"] is None
+        assert schema["is_flag"] is None
+        # All keys present for tabular uniformity
+        assert "type" in schema
+        assert "enum" in schema
+        assert "default" in schema
+        assert "multiple" in schema
+        assert "help" in schema
 
     def test_multiple(self) -> None:
         param = click.Option(["--env"], multiple=True)
         schema = param_to_schema(param)
         assert schema["multiple"] is True
 
-    def test_none_default_omitted(self) -> None:
-        param = click.Option(["--foo"], default=None)
+    def test_choice_enum(self) -> None:
+        param = click.Option(["--mode"], type=click.Choice(["a", "b", "c"]))
         schema = param_to_schema(param)
-        assert "default" not in schema
+        assert schema["type"] == "string"
+        assert schema["enum"] == "a|b|c"
+
+    def test_uniform_keys(self) -> None:
+        """All params produce the same set of keys for TOON tabular encoding."""
+        opt = click.Option(["--foo"], is_flag=True, default=False, help="Help")
+        arg = click.Argument(["bar"])
+        assert set(param_to_schema(opt).keys()) == set(param_to_schema(arg).keys())
 
 
 class TestCommandToSchema:
@@ -149,28 +173,20 @@ class TestGenerateCliSchema:
         assert "list" in subs
         assert "remove" in subs
 
-    def test_enum_options(self) -> None:
+    def test_enum_options_flat(self) -> None:
         import yaas.cli
 
         schema = generate_cli_schema(yaas.cli.app)
         run_opts = {o["name"]: o for o in schema["commands"]["run"]["options"]}
         net = run_opts["network"]
-        assert net["type"]["enum"] == ["host", "bridge", "none"]
-
-    def test_output_is_valid_json(self) -> None:
-        import yaas.cli
-        from yaas.schema import dump_cli_schema
-
-        output = dump_cli_schema(yaas.cli.app)
-        parsed = json.loads(output)
-        assert isinstance(parsed, dict)
+        assert net["type"] == "string"
+        assert net["enum"] == "host|bridge|none"
 
     def test_per_command_schema(self) -> None:
         import click
         import typer.main
 
         import yaas.cli
-        from yaas.schema import command_to_schema
 
         root: click.Group = typer.main.get_command(yaas.cli.app)  # type: ignore[assignment]
         run_cmd = root.get_command(click.Context(root), "run")
@@ -179,3 +195,45 @@ class TestGenerateCliSchema:
         assert schema["name"] == "run"
         assert schema["allow_extra_args"] is True
         assert "subcommands" not in schema
+
+
+class TestOutputFormats:
+    def test_json_output(self) -> None:
+        import yaas.cli
+
+        output = dump_cli_schema(yaas.cli.app, fmt="json")
+        parsed = json.loads(output)
+        assert isinstance(parsed, dict)
+        assert "commands" in parsed
+
+    def test_toon_output_roundtrips(self) -> None:
+        import yaas.cli
+
+        schema = generate_cli_schema(yaas.cli.app)
+        toon_str = dump_cli_schema(yaas.cli.app, fmt="toon")
+        roundtrip = toon_decode(toon_str)
+        assert roundtrip["schema_version"] == schema["schema_version"]
+        assert roundtrip["program"] == schema["program"]
+        assert set(roundtrip["commands"].keys()) == set(schema["commands"].keys())
+
+    def test_toon_command_output(self) -> None:
+        import click
+        import typer.main
+
+        import yaas.cli
+
+        root: click.Group = typer.main.get_command(yaas.cli.app)  # type: ignore[assignment]
+        run_cmd = root.get_command(click.Context(root), "run")
+        assert run_cmd is not None
+        toon_str = dump_command_schema(run_cmd, "run", fmt="toon")
+        roundtrip = toon_decode(toon_str)
+        assert roundtrip["name"] == "run"
+        assert roundtrip["allow_extra_args"] is True
+
+    def test_toon_default_format(self) -> None:
+        import yaas.cli
+
+        toon_output = dump_cli_schema(yaas.cli.app)
+        json_output = dump_cli_schema(yaas.cli.app, fmt="json")
+        # Default is TOON, which should be shorter
+        assert len(toon_output) < len(json_output)

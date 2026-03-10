@@ -8,46 +8,48 @@ from typing import Any
 import click
 import typer
 import typer.main
+from toon_format import encode as toon_encode
 
 
-def click_type_to_json(param_type: click.ParamType) -> dict[str, Any]:
-    """Convert a Click parameter type to a JSON Schema type descriptor."""
+def _click_type_name(param_type: click.ParamType) -> str:
+    """Convert a Click parameter type to a simple type string."""
     if isinstance(param_type, click.types.BoolParamType):
-        return {"type": "boolean"}
+        return "boolean"
     if isinstance(param_type, click.types.IntParamType):
-        return {"type": "integer"}
+        return "integer"
     if isinstance(param_type, click.types.FloatParamType):
-        return {"type": "number"}
+        return "number"
     if isinstance(param_type, click.Choice):
-        return {"type": "string", "enum": list(param_type.choices)}
-    return {"type": "string"}
+        return "string"
+    return "string"
+
+
+def _click_type_enum(param_type: click.ParamType) -> str | None:
+    """Extract enum values from a Click Choice type as pipe-delimited string."""
+    if isinstance(param_type, click.Choice):
+        return "|".join(param_type.choices)
+    return None
 
 
 def param_to_schema(param: click.Parameter) -> dict[str, Any]:
-    """Convert a Click Parameter to a schema dict."""
+    """Convert a Click Parameter to a flat schema dict.
+
+    All params produce the same set of keys (with None for absent values)
+    to enable TOON tabular encoding.
+    """
     is_option = isinstance(param, click.Option)
-    schema: dict[str, Any] = {
+    return {
         "name": param.name,
         "kind": "option" if is_option else "argument",
-        "type": click_type_to_json(param.type),
+        "type": _click_type_name(param.type),
+        "enum": _click_type_enum(param.type),
         "required": param.required,
+        "default": param.default,
+        "opts": "|".join(param.opts + param.secondary_opts) if is_option else None,
+        "is_flag": param.is_flag if isinstance(param, click.Option) else None,
+        "multiple": param.multiple or None,
+        "help": getattr(param, "help", None),
     }
-
-    if is_option:
-        assert isinstance(param, click.Option)
-        schema["opts"] = list(param.opts) + list(param.secondary_opts)
-        schema["is_flag"] = param.is_flag
-
-    if param.multiple:
-        schema["multiple"] = True
-
-    if param.default is not None:
-        schema["default"] = param.default
-
-    if help_text := getattr(param, "help", None):
-        schema["help"] = help_text
-
-    return schema
 
 
 _EXCLUDED_OPTIONS = frozenset({"help", "cli_introspection"})
@@ -111,6 +113,17 @@ def generate_cli_schema(app: typer.Typer) -> dict[str, Any]:
     }
 
 
-def dump_cli_schema(app: typer.Typer) -> str:
-    """Generate and serialize the CLI schema to a JSON string."""
-    return json.dumps(generate_cli_schema(app), indent=2)
+def dump_cli_schema(app: typer.Typer, fmt: str = "toon") -> str:
+    """Generate and serialize the CLI schema."""
+    schema = generate_cli_schema(app)
+    if fmt == "json":
+        return json.dumps(schema, indent=2)
+    return toon_encode(schema)
+
+
+def dump_command_schema(cmd: click.Command | click.Group, name: str, fmt: str = "toon") -> str:
+    """Generate and serialize a single command's schema."""
+    schema = command_to_schema(cmd, name)
+    if fmt == "json":
+        return json.dumps(schema, indent=2)
+    return toon_encode(schema)

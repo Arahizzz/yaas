@@ -94,7 +94,7 @@ def main_callback(
     _cli_introspection: bool = typer.Option(
         False,
         "--cli-introspection",
-        help="Dump CLI schema as JSON and exit. Append to any command for its schema only.",
+        help="Dump CLI schema and exit. Use --format toon|json (default: toon).",
         is_eager=True,
         hidden=False,
     ),
@@ -1131,24 +1131,40 @@ def worktree_repair() -> None:
 
 def _handle_cli_introspection() -> None:
     """Handle --cli-introspection flag: dump schema for the specified command path."""
-    import json
-
     import click
     import typer.main
 
-    from .schema import command_to_schema, generate_cli_schema
+    from .schema import dump_cli_schema, dump_command_schema
 
-    args = [a for a in sys.argv[1:] if a != "--cli-introspection"]
+    # Parse --format from argv
+    fmt = "toon"
+    filtered: list[str] = []
+    skip_next = False
+    for i, arg in enumerate(sys.argv[1:]):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--cli-introspection":
+            continue
+        if arg == "--format":
+            if i + 1 < len(sys.argv) - 1:
+                fmt = sys.argv[i + 2]  # +2 because enumerate starts at argv[1:]
+                skip_next = True
+            continue
+        if arg.startswith("--format="):
+            fmt = arg.split("=", 1)[1]
+            continue
+        filtered.append(arg)
 
-    if not args:
-        print(json.dumps(generate_cli_schema(app), indent=2))  # noqa: T201
+    if not filtered:
+        print(dump_cli_schema(app, fmt=fmt))  # noqa: T201
         return
 
     # Navigate the command tree following the provided path
     root = typer.main.get_command(app)
     cmd: click.Command | click.Group = root
     name = root.name or "yaas"
-    for arg in args:
+    for arg in filtered:
         if not isinstance(cmd, click.Group):
             break
         sub = cmd.get_command(click.Context(cmd), arg)
@@ -1157,7 +1173,7 @@ def _handle_cli_introspection() -> None:
         cmd = sub
         name = arg
 
-    print(json.dumps(command_to_schema(cmd, name), indent=2))  # noqa: T201
+    print(dump_command_schema(cmd, name, fmt=fmt))  # noqa: T201
 
 
 def main() -> None:
