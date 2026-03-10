@@ -94,7 +94,7 @@ yaas shell
 
 # Create a persistent box
 yaas box create dev shell
-yaas box enter dev
+yaas box exec dev bash
 
 # Show resolved config
 yaas config

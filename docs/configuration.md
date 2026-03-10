@@ -138,7 +138,6 @@ Box specs are defined with `[box.*]` sections and support the same container set
 ssh_agent = true
 git_config = true
 clipboard = true
-shell = ["zsh"]                    # Shell for `yaas box enter` (default: bash)
 # command = ["sleep", "infinity"]     # Default, override for custom init process
 
 [box.hardened]

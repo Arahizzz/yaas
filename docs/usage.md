@@ -138,7 +138,7 @@ yaas box create dev shell
 yaas box create scratch --ssh-agent --memory 8g
 
 # Enter a running box (interactive shell)
-yaas box enter dev
+yaas box exec dev bash
 
 # Execute a command in a running box
 yaas box exec dev -- make test
@@ -166,7 +166,6 @@ Box specs are defined in config with `[box.*]` sections. They support the same s
 ssh_agent = true
 git_config = true
 clipboard = true
-shell = ["zsh"]
 
 [box.hardened]
 base = "none"
@@ -188,7 +187,7 @@ systemctl --user daemon-reload
 systemctl --user start yaas-box-dev
 
 # Enter the quadlet-managed box
-yaas box enter dev
+yaas box exec dev bash
 
 # Manage via systemctl
 systemctl --user stop yaas-box-dev
