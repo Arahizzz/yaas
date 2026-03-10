@@ -4,16 +4,51 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import pytest
+
 from yaas.config import (
     Config,
     ContainerSettings,
     ResourceLimits,
     SecuritySettings,
     ToolConfig,
+    _merge_toml,
     load_config,
     load_tool_commands,
     resolve_effective_config,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_global_config(tmp_path: Path) -> None:
+    """Prevent tests from reading or auto-creating the real global config."""
+    fake_config_path = tmp_path / "nonexistent" / "config.toml"
+    with (
+        patch("yaas.config.GLOBAL_CONFIG_PATH", fake_config_path),
+        patch("yaas.config._ensure_global_config"),
+    ):
+        yield  # type: ignore[misc]
+
+
+def _load_project_toml(toml: str) -> Config:
+    """Write TOML to a temp .yaas.toml and load it via load_config."""
+    with TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        (project_dir / ".yaas.toml").write_text(toml)
+        return load_config(project_dir)
+
+
+def _merge_global_and_project(global_toml: str, project_toml: str) -> Config:
+    """Merge two TOML strings as global → project config."""
+    config = Config()
+    with TemporaryDirectory() as tmpdir:
+        global_path = Path(tmpdir) / "global.toml"
+        global_path.write_text(global_toml)
+        project_path = Path(tmpdir) / "project.toml"
+        project_path.write_text(project_toml)
+        _merge_toml(config, global_path)
+        _merge_toml(config, project_path)
+    return config
 
 
 def test_default_config() -> None:
@@ -81,10 +116,7 @@ def test_inheritance_hierarchy() -> None:
 
 def test_project_config_overrides() -> None:
     """Test that project config overrides defaults."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 ssh_agent = true
 network_mode = "none"
 
@@ -92,8 +124,6 @@ network_mode = "none"
 memory = "16g"
 cpus = 4.0
 """)
-        config = load_config(project_dir)
-
     assert config.ssh_agent is True
     assert config.network_mode == "none"
     assert config.resources.memory == "16g"
@@ -102,10 +132,7 @@ cpus = 4.0
 
 def test_tools_from_project_config() -> None:
     """Test that tools are loaded from project config."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.claude]
 yolo_flags = ["--dangerously-skip-permissions"]
 mounts = [".claude", ".claude.json"]
@@ -115,8 +142,6 @@ env = { ANTHROPIC_API_KEY = true }
 yolo_flags = ["--yes"]
 mounts = [".aider"]
 """)
-        config = load_config(project_dir)
-
     assert "claude" in config.tools
     assert config.tools["claude"].yolo_flags == ["--dangerously-skip-permissions"]
     assert config.tools["claude"].mounts == [".claude", ".claude.json"]
@@ -128,28 +153,18 @@ mounts = [".aider"]
 
 def test_tools_field_level_merge() -> None:
     """Test that project config merges tool fields, not replaces entire tool."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        # Simulate global config with full tool definition
-        global_config = Path(tmpdir) / "global.toml"
-        global_config.write_text("""
+    config = _merge_global_and_project(
+        """
 [tools.claude]
 yolo_flags = ["--dangerously-skip-permissions"]
 mounts = [".claude", ".claude.json"]
 env = { ANTHROPIC_API_KEY = true }
-""")
-        # Project config only overrides yolo_flags
-        project_config = project_dir / ".yaas.toml"
-        project_config.write_text("""
+""",
+        """
 [tools.claude]
 yolo_flags = []
-""")
-        config = Config()
-        from yaas.config import _merge_toml
-
-        _merge_toml(config, global_config)
-        _merge_toml(config, project_config)
-
+""",
+    )
     assert config.tools["claude"].yolo_flags == []
     assert config.tools["claude"].mounts == [".claude", ".claude.json"]
     assert config.tools["claude"].env == {"ANTHROPIC_API_KEY": True}
@@ -157,36 +172,26 @@ yolo_flags = []
 
 def test_tools_invalid_yolo_flags_skipped() -> None:
     """Test that tools with invalid yolo_flags are skipped."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.bad]
 yolo_flags = "not-a-list"
 
 [tools.good]
 yolo_flags = ["--yes"]
 """)
-        config = load_config(project_dir)
-
     assert "bad" not in config.tools
     assert "good" in config.tools
 
 
 def test_tools_invalid_type_skipped() -> None:
     """Test that non-table tool entries are skipped."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools]
 bad = "not-a-table"
 
 [tools.good]
 yolo_flags = ["--yes"]
 """)
-        config = load_config(project_dir)
-
     assert "bad" not in config.tools
     assert "good" in config.tools
 
@@ -201,14 +206,9 @@ def test_load_tool_commands_fallback_on_error() -> None:
 
 def test_tool_with_empty_fields() -> None:
     """Test that a tool with no fields is valid and uses defaults."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.mytool]
 """)
-        config = load_config(project_dir)
-
     assert "mytool" in config.tools
     assert config.tools["mytool"].command == []
     assert config.tools["mytool"].yolo_flags == []
@@ -218,17 +218,12 @@ def test_tool_with_empty_fields() -> None:
 
 def test_tool_command_field() -> None:
     """Test that command field is parsed from config."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.cc]
 command = ["npx", "claude-code"]
 yolo_flags = ["--dangerously-skip-permissions"]
 mounts = [".claude"]
 """)
-        config = load_config(project_dir)
-
     assert config.tools["cc"].command == ["npx", "claude-code"]
     assert config.tools["cc"].yolo_flags == ["--dangerously-skip-permissions"]
     assert config.tools["cc"].mounts == [".claude"]
@@ -236,44 +231,31 @@ mounts = [".claude"]
 
 def test_tool_command_invalid_skipped() -> None:
     """Test that tool with invalid command field is skipped."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.bad]
 command = "not-a-list"
 
 [tools.good]
 command = ["claude"]
 """)
-        config = load_config(project_dir)
-
     assert "bad" not in config.tools
     assert "good" in config.tools
 
 
 def test_tool_command_field_level_merge() -> None:
     """Test that command field participates in field-level merge."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        global_config = Path(tmpdir) / "global.toml"
-        global_config.write_text("""
+    config = _merge_global_and_project(
+        """
 [tools.cc]
 command = ["npx", "claude-code"]
 yolo_flags = ["--dangerously-skip-permissions"]
 mounts = [".claude"]
-""")
-        project_config = project_dir / ".yaas.toml"
-        project_config.write_text("""
+""",
+        """
 [tools.cc]
 command = ["claude"]
-""")
-        config = Config()
-        from yaas.config import _merge_toml
-
-        _merge_toml(config, global_config)
-        _merge_toml(config, project_config)
-
+""",
+    )
     assert config.tools["cc"].command == ["claude"]
     # Other fields preserved from global
     assert config.tools["cc"].yolo_flags == ["--dangerously-skip-permissions"]
@@ -282,10 +264,7 @@ command = ["claude"]
 
 def test_tool_env_passthrough_and_hardcoded() -> None:
     """Test that tool env supports both pass-through (true) and hardcoded (string) values."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.claude]
 mounts = [".claude"]
 
@@ -293,25 +272,18 @@ mounts = [".claude"]
 ANTHROPIC_API_KEY = true
 CUSTOM_VAR = "hello"
 """)
-        config = load_config(project_dir)
-
     assert config.tools["claude"].env == {"ANTHROPIC_API_KEY": True, "CUSTOM_VAR": "hello"}
 
 
 def test_tool_env_invalid_value_skips_tool() -> None:
     """Test that tool with invalid env value type is skipped."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.bad]
 env = { KEY = 42 }
 
 [tools.good]
 env = { KEY = true }
 """)
-        config = load_config(project_dir)
-
     assert "bad" not in config.tools
     assert "good" in config.tools
     assert config.tools["good"].env == {"KEY": True}
@@ -319,42 +291,29 @@ env = { KEY = true }
 
 def test_global_env_bool_and_string() -> None:
     """Test that global env supports both bool and string values."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [env]
 GITHUB_TOKEN = true
 CUSTOM = "value"
 """)
-        config = load_config(project_dir)
-
     assert config.env == {"GITHUB_TOKEN": True, "CUSTOM": "value"}
 
 
 def test_tool_env_field_level_merge() -> None:
-    """Test that env field participates in field-level merge (replaced, not deep-merged)."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        global_config = Path(tmpdir) / "global.toml"
-        global_config.write_text("""
+    """Test that env field is deep-merged across configs (project wins on conflict)."""
+    config = _merge_global_and_project(
+        """
 [tools.claude]
 mounts = [".claude"]
 env = { ANTHROPIC_API_KEY = true }
-""")
-        project_config = project_dir / ".yaas.toml"
-        project_config.write_text("""
+""",
+        """
 [tools.claude.env]
 CUSTOM_KEY = "override"
-""")
-        config = Config()
-        from yaas.config import _merge_toml
-
-        _merge_toml(config, global_config)
-        _merge_toml(config, project_config)
-
-    # env is replaced entirely by project config
-    assert config.tools["claude"].env == {"CUSTOM_KEY": "override"}
+""",
+    )
+    # env is merged: global keys preserved, project keys added
+    assert config.tools["claude"].env == {"ANTHROPIC_API_KEY": True, "CUSTOM_KEY": "override"}
     # mounts preserved from global
     assert config.tools["claude"].mounts == [".claude"]
 
@@ -514,10 +473,7 @@ def test_resolve_does_not_mutate_original() -> None:
 
 def test_tool_override_bool_fields_from_toml() -> None:
     """Test that tool bool override fields are parsed from TOML."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.claude]
 yolo_flags = ["--dangerously-skip-permissions"]
 ssh_agent = true
@@ -527,8 +483,6 @@ podman_docker_socket = false
 clipboard = true
 readonly_project = true
 """)
-        config = load_config(project_dir)
-
     tc = config.tools["claude"]
     assert tc.ssh_agent is True
     assert tc.git_config is True
@@ -540,16 +494,11 @@ readonly_project = true
 
 def test_tool_override_string_fields_from_toml() -> None:
     """Test that tool string override fields are parsed from TOML."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.claude]
 network_mode = "none"
 pid_mode = "host"
 """)
-        config = load_config(project_dir)
-
     tc = config.tools["claude"]
     assert tc.network_mode == "none"
     assert tc.pid_mode == "host"
@@ -557,10 +506,7 @@ pid_mode = "host"
 
 def test_tool_override_resources_from_toml() -> None:
     """Test that tool resource overrides are parsed from TOML."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.claude]
 mounts = [".claude"]
 
@@ -568,8 +514,6 @@ mounts = [".claude"]
 memory = "16g"
 cpus = 4.0
 """)
-        config = load_config(project_dir)
-
     tc = config.tools["claude"]
     assert tc.resources is not None
     assert tc.resources.memory == "16g"
@@ -579,27 +523,19 @@ cpus = 4.0
 
 def test_tool_override_field_level_merge() -> None:
     """Test that tool override fields participate in field-level merge."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        global_config = Path(tmpdir) / "global.toml"
-        global_config.write_text("""
+    config = _merge_global_and_project(
+        """
 [tools.claude]
 yolo_flags = ["--dangerously-skip-permissions"]
 mounts = [".claude"]
 ssh_agent = true
 network_mode = "none"
-""")
-        project_config = project_dir / ".yaas.toml"
-        project_config.write_text("""
+""",
+        """
 [tools.claude]
 network_mode = "bridge"
-""")
-        config = Config()
-        from yaas.config import _merge_toml
-
-        _merge_toml(config, global_config)
-        _merge_toml(config, project_config)
-
+""",
+    )
     tc = config.tools["claude"]
     # Overridden by project
     assert tc.network_mode == "bridge"
@@ -611,18 +547,13 @@ network_mode = "bridge"
 
 def test_tool_override_backward_compatible() -> None:
     """Test that old-format TOML (only command/yolo_flags/mounts/env) still works."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.claude]
 command = ["npx", "claude-code"]
 yolo_flags = ["--dangerously-skip-permissions"]
 mounts = [".claude", ".claude.json"]
 env = { ANTHROPIC_API_KEY = true }
 """)
-        config = load_config(project_dir)
-
     tc = config.tools["claude"]
     assert tc.command == ["npx", "claude-code"]
     assert tc.yolo_flags == ["--dangerously-skip-permissions"]
@@ -662,18 +593,13 @@ def test_config_default_lxcfs() -> None:
 
 def test_security_from_project_config() -> None:
     """Test that [security] section is parsed from project config."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 lxcfs = true
 
 [security]
 capabilities = ["CHOWN", "KILL"]
 seccomp_profile = "/path/to/profile.json"
 """)
-        config = load_config(project_dir)
-
     assert config.lxcfs is True
     assert config.security.capabilities == ["CHOWN", "KILL"]
     assert config.security.seccomp_profile == "/path/to/profile.json"
@@ -681,15 +607,10 @@ seccomp_profile = "/path/to/profile.json"
 
 def test_security_partial_override() -> None:
     """Test that [security] section merges field-level (partial override)."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [security]
 seccomp_profile = "/custom/profile.json"
 """)
-        config = load_config(project_dir)
-
     # seccomp_profile overridden
     assert config.security.seccomp_profile == "/custom/profile.json"
     # capabilities preserved from default
@@ -698,32 +619,22 @@ seccomp_profile = "/custom/profile.json"
 
 def test_security_use_runtime_defaults() -> None:
     """Test that user can explicitly use runtime defaults with empty capabilities list."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [security]
 capabilities = []
 """)
-        config = load_config(project_dir)
-
     assert config.security.capabilities == []
 
 
 def test_tool_security_override_from_toml() -> None:
     """Test that tool [security] overrides are parsed from TOML."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.claude]
 mounts = [".claude"]
 
 [tools.claude.security]
 capabilities = ["CHOWN", "NET_RAW"]
 """)
-        config = load_config(project_dir)
-
     tc = config.tools["claude"]
     assert tc.security is not None
     assert tc.security.capabilities == ["CHOWN", "NET_RAW"]
@@ -801,26 +712,76 @@ def test_resolve_mount_project_override() -> None:
 
 def test_mount_project_from_toml() -> None:
     """Test that mount_project is parsed from TOML config."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 mount_project = false
 """)
-        config = load_config(project_dir)
-
     assert config.mount_project is False
 
 
 def test_tool_mount_project_from_toml() -> None:
     """Test that per-tool mount_project is parsed from TOML config."""
-    with TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        config_file = project_dir / ".yaas.toml"
-        config_file.write_text("""
+    config = _load_project_toml("""
 [tools.mytool]
 mount_project = false
 """)
-        config = load_config(project_dir)
-
     assert config.tools["mytool"].mount_project is False
+
+
+# --- Config merge (global + project) tests ---
+
+
+def test_mounts_merge_global_project() -> None:
+    """Test that mounts from global and project configs are merged, not replaced."""
+    config = _merge_global_and_project(
+        'mounts = ["/var/run/docker.sock"]',
+        'mounts = ["~/.claude"]',
+    )
+    assert config.mounts == ["/var/run/docker.sock", "~/.claude"]
+
+
+def test_tool_mounts_merge() -> None:
+    """Test that tool mounts from global and project configs are merged."""
+    config = _merge_global_and_project(
+        """
+[tools.claude]
+mounts = [".claude"]
+""",
+        """
+[tools.claude]
+mounts = [".claude.json"]
+""",
+    )
+    assert config.tools["claude"].mounts == [".claude", ".claude.json"]
+
+
+def test_ports_devices_merge_global_project() -> None:
+    """Test that ports and devices from global and project configs are merged."""
+    config = _merge_global_and_project(
+        """
+ports = ["8080:8080"]
+devices = ["/dev/kvm"]
+""",
+        """
+ports = ["3000:3000"]
+devices = ["/dev/fuse"]
+""",
+    )
+    assert config.ports == ["8080:8080", "3000:3000"]
+    assert config.devices == ["/dev/kvm", "/dev/fuse"]
+
+
+def test_env_merge_global_project() -> None:
+    """Test that env dicts from global and project configs are merged (project wins)."""
+    config = _merge_global_and_project(
+        """
+[env]
+GITHUB_TOKEN = true
+SHARED = "global"
+""",
+        """
+[env]
+CUSTOM = "value"
+SHARED = "project"
+""",
+    )
+    assert config.env == {"GITHUB_TOKEN": True, "CUSTOM": "value", "SHARED": "project"}

@@ -256,6 +256,10 @@ def _merge_dict(config: Config, data: dict[str, Any]) -> None:
                     setattr(config.security, skey, svalue)
         elif key == "tools" and isinstance(value, dict):
             _merge_tools(config.tools, value)
+        elif key in ("mounts", "ports", "devices") and isinstance(value, list):
+            getattr(config, key).extend(value)
+        elif key == "env" and isinstance(value, dict):
+            config.env.update(value)
         elif hasattr(config, key):
             setattr(config, key, value)
 
@@ -323,13 +327,13 @@ def _merge_tools(tools: dict[str, ToolConfig], data: dict[str, Any]) -> None:
         if "yolo_flags" in parsed_lists:
             existing.yolo_flags = parsed_lists["yolo_flags"]
         if "mounts" in parsed_lists:
-            existing.mounts = parsed_lists["mounts"]
+            existing.mounts.extend(parsed_lists["mounts"])
         if "ports" in parsed_lists:
-            existing.ports = parsed_lists["ports"]
+            existing.ports.extend(parsed_lists["ports"])
         if "devices" in parsed_lists:
-            existing.devices = parsed_lists["devices"]
+            existing.devices.extend(parsed_lists["devices"])
         if parsed_env is not None:
-            existing.env = parsed_env
+            existing.env.update(parsed_env)
 
         # Container setting overrides — generic via ContainerSettings fields
         for field_name in _CONTAINER_FIELDS - _SPECIAL_FIELDS:
