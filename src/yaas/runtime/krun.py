@@ -42,9 +42,10 @@ class PodmanKrunRuntime(PodmanRuntime):
         if config.network_mode == "host":
             logger.warning("--network host is not supported with libkrun — falling back to bridge")
             config.network_mode = "bridge"
-        if config.security.capabilities is not None:
+        if config.security.cap_drop or config.security.cap_add:
             logger.warning("capability restrictions are not supported with libkrun — disabling")
-            config.security.capabilities = None
+            config.security.cap_drop = []
+            config.security.cap_add = []
 
     def _inject_krun_flags(self, cmd: list[str], spec: ContainerSpec) -> list[str]:
         """Insert krun-specific flags before the image argument."""

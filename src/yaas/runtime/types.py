@@ -81,7 +81,8 @@ class ContainerSpec:
 
     # Security
     privileged: bool = False  # --privileged (all caps, no seccomp, all devices)
-    capabilities: list[str] | None = None  # Exact cap set; triggers --cap-drop ALL + --cap-add each
+    cap_drop: list[str] = field(default_factory=list)  # --cap-drop flags
+    cap_add: list[str] = field(default_factory=list)  # --cap-add flags
     seccomp_profile: str | None = None  # path to seccomp JSON profile
 
 

@@ -572,7 +572,8 @@ env = { ANTHROPIC_API_KEY = true }
 def test_security_settings_defaults() -> None:
     """Test that SecuritySettings defaults are all None (inherit semantics)."""
     sec = SecuritySettings()
-    assert sec.capabilities is None
+    assert sec.cap_drop is None
+    assert sec.cap_add is None
     assert sec.seccomp_profile is None
 
 
@@ -580,8 +581,9 @@ def test_config_default_security() -> None:
     """Test that Config has concrete security defaults."""
     config = Config()
     assert config.security is not None
-    assert "CHOWN" in config.security.capabilities
-    assert "KILL" in config.security.capabilities
+    assert config.security.cap_drop == ["ALL"]
+    assert "CHOWN" in config.security.cap_add
+    assert "KILL" in config.security.cap_add
     assert config.security.seccomp_profile is None
 
 
@@ -597,11 +599,13 @@ def test_security_from_project_config() -> None:
 lxcfs = true
 
 [security]
-capabilities = ["CHOWN", "KILL"]
+cap_drop = ["ALL"]
+cap_add = ["CHOWN", "KILL"]
 seccomp_profile = "/path/to/profile.json"
 """)
     assert config.lxcfs is True
-    assert config.security.capabilities == ["CHOWN", "KILL"]
+    assert config.security.cap_drop == ["ALL"]
+    assert config.security.cap_add == ["CHOWN", "KILL"]
     assert config.security.seccomp_profile == "/path/to/profile.json"
 
 
@@ -613,17 +617,20 @@ seccomp_profile = "/custom/profile.json"
 """)
     # seccomp_profile overridden
     assert config.security.seccomp_profile == "/custom/profile.json"
-    # capabilities preserved from default
-    assert "CHOWN" in config.security.capabilities
+    # cap_drop/cap_add preserved from default
+    assert config.security.cap_drop == ["ALL"]
+    assert "CHOWN" in config.security.cap_add
 
 
 def test_security_use_runtime_defaults() -> None:
-    """Test that user can explicitly use runtime defaults with empty capabilities list."""
+    """Test that user can explicitly drop nothing with empty cap_drop."""
     config = _load_project_toml("""
 [security]
-capabilities = []
+cap_drop = []
+cap_add = []
 """)
-    assert config.security.capabilities == []
+    assert config.security.cap_drop == []
+    assert config.security.cap_add == []
 
 
 def test_tool_security_override_from_toml() -> None:
@@ -633,11 +640,13 @@ def test_tool_security_override_from_toml() -> None:
 mounts = [".claude"]
 
 [tools.claude.security]
-capabilities = ["CHOWN", "NET_RAW"]
+cap_drop = ["ALL"]
+cap_add = ["CHOWN", "NET_RAW"]
 """)
     tc = config.tools["claude"]
     assert tc.security is not None
-    assert tc.security.capabilities == ["CHOWN", "NET_RAW"]
+    assert tc.security.cap_drop == ["ALL"]
+    assert tc.security.cap_add == ["CHOWN", "NET_RAW"]
     assert tc.security.seccomp_profile is None  # not overridden
 
 
@@ -647,14 +656,16 @@ def test_resolve_security_partial_override() -> None:
         active_tool="claude",
         tools={
             "claude": ToolConfig(
-                security=SecuritySettings(capabilities=["CHOWN", "NET_RAW"]),
+                security=SecuritySettings(cap_add=["CHOWN", "NET_RAW"]),
             )
         },
     )
     result = resolve_effective_config(config)
 
-    # capabilities overridden by tool
-    assert result.security.capabilities == ["CHOWN", "NET_RAW"]
+    # cap_add overridden by tool
+    assert result.security.cap_add == ["CHOWN", "NET_RAW"]
+    # cap_drop inherited from global default
+    assert result.security.cap_drop == ["ALL"]
     # seccomp_profile inherited from global (None)
     assert result.security.seccomp_profile is None
 
@@ -665,16 +676,16 @@ def test_resolve_security_does_not_mutate_original() -> None:
         active_tool="claude",
         tools={
             "claude": ToolConfig(
-                security=SecuritySettings(capabilities=["CHOWN", "NET_RAW"]),
+                security=SecuritySettings(cap_add=["CHOWN", "NET_RAW"]),
             )
         },
     )
     result = resolve_effective_config(config)
 
     # Original unchanged
-    assert "NET_RAW" not in config.security.capabilities
+    assert "NET_RAW" not in config.security.cap_add
     # Resolved has override
-    assert result.security.capabilities == ["CHOWN", "NET_RAW"]
+    assert result.security.cap_add == ["CHOWN", "NET_RAW"]
 
 
 def test_resolve_runtime_override() -> None:

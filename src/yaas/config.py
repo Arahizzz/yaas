@@ -39,7 +39,8 @@ class SecuritySettings:
     For Config: concrete defaults are set in the Config dataclass.
     """
 
-    capabilities: list[str] | None = None  # Exact set of caps; None = runtime defaults
+    cap_drop: list[str] | None = None  # Caps to drop; None = inherit
+    cap_add: list[str] | None = None  # Caps to add; None = inherit
     seccomp_profile: str | None = None  # None = runtime default, path = custom JSON
 
 
@@ -117,7 +118,8 @@ class Config(ContainerSettings):
     resources: ResourceLimits = field(default_factory=ResourceLimits)
     security: SecuritySettings = field(
         default_factory=lambda: SecuritySettings(
-            capabilities=[
+            cap_drop=["ALL"],
+            cap_add=[
                 "CHOWN",
                 "DAC_OVERRIDE",
                 "FOWNER",
@@ -233,7 +235,7 @@ def _get_base_config(base: str) -> Config:
     if base == "none":
         return Config(
             network_mode="none",
-            security=SecuritySettings(capabilities=[]),
+            security=SecuritySettings(cap_drop=["ALL"], cap_add=[]),
         )
     # "minimal" = plain defaults
     return Config()

@@ -283,20 +283,22 @@ class TestPodmanKrunRuntime:
         with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
         config = make_config(
-            security=SecuritySettings(capabilities=["CHOWN", "DAC_OVERRIDE"]),
+            security=SecuritySettings(cap_drop=["ALL"], cap_add=["CHOWN", "DAC_OVERRIDE"]),
         )
         runtime.adjust_config(config)
-        assert config.security.capabilities is None
+        assert config.security.cap_drop == []
+        assert config.security.cap_add == []
 
     def test_adjust_config_noop_when_no_capabilities(self) -> None:
-        """Test that adjust_config is a no-op when capabilities are already None."""
+        """Test that adjust_config is a no-op when cap lists are already empty."""
         from yaas.config import SecuritySettings
 
         with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanKrunRuntime()
-        config = make_config(security=SecuritySettings(capabilities=None))
+        config = make_config(security=SecuritySettings(cap_drop=[], cap_add=[]))
         runtime.adjust_config(config)
-        assert config.security.capabilities is None
+        assert config.security.cap_drop == []
+        assert config.security.cap_add == []
 
 
 # ============================================================
@@ -471,10 +473,10 @@ class TestSecurityFlags:
     """Tests for capability and seccomp CLI flag generation."""
 
     def test_podman_capabilities(self) -> None:
-        """Test Podman generates --cap-drop ALL and --cap-add flags from capabilities list."""
+        """Test Podman generates --cap-drop ALL and --cap-add flags from cap_drop/cap_add."""
         with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
-            spec = make_spec(capabilities=["CHOWN", "KILL"])
+            spec = make_spec(cap_drop=["ALL"], cap_add=["CHOWN", "KILL"])
             cmd = runtime._build_command(spec)
 
         assert "--cap-drop" in cmd
@@ -486,11 +488,11 @@ class TestSecurityFlags:
         assert "KILL" in cap_add_values
 
     def test_docker_capabilities(self) -> None:
-        """Test Docker generates --cap-drop ALL and --cap-add flags from capabilities list."""
+        """Test Docker generates --cap-drop ALL and --cap-add flags from cap_drop/cap_add."""
         with mock_docker_socket(accessible=True):
             runtime = DockerRuntime()
 
-        spec = make_spec(capabilities=["CHOWN", "KILL"])
+        spec = make_spec(cap_drop=["ALL"], cap_add=["CHOWN", "KILL"])
         cmd = runtime._build_command(spec)
 
         assert "--cap-drop" in cmd
@@ -500,8 +502,8 @@ class TestSecurityFlags:
         assert "CHOWN" in cap_add_values
         assert "KILL" in cap_add_values
 
-    def test_no_cap_flags_when_none(self) -> None:
-        """Test that no cap flags are generated when fields are None."""
+    def test_no_cap_flags_when_empty(self) -> None:
+        """Test that no cap flags are generated when lists are empty."""
         with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = make_spec()
@@ -544,7 +546,7 @@ class TestSecurityFlags:
         assert seccomp_opts[0] == "seccomp=/path/to/profile.json"
 
     def test_no_seccomp_flag_when_none(self) -> None:
-        """Test that no seccomp flag is generated when profile is None."""
+        """Test that no seccomp flag is generated when seccomp_profile is None."""
         with patch("yaas.runtime.podman.is_linux", return_value=True):
             runtime = PodmanRuntime()
             spec = make_spec()

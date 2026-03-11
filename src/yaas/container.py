@@ -30,6 +30,19 @@ from .worktree import (
 
 logger = get_logger()
 
+# Capabilities required for rootless Podman-in-Podman (replaces --privileged)
+PODMAN_REQUIRED_CAPS = [
+    "SYS_ADMIN",
+    "MKNOD",
+    "SYS_CHROOT",
+    "NET_ADMIN",
+    "SETUID",
+    "SETGID",
+    "CHOWN",
+    "DAC_OVERRIDE",
+    "FOWNER",
+]
+
 LXCFS_PROC_FILES = (
     "cpuinfo",
     "meminfo",
@@ -39,6 +52,20 @@ LXCFS_PROC_FILES = (
     "swaps",
     "loadavg",
 )
+
+
+def _inject_podman_caps(cap_add: list[str], devices: list[str]) -> None:
+    """Inject capabilities and devices required for Podman-in-Podman.
+
+    Adds missing required caps to cap_add and /dev/fuse to devices.
+    Logs a warning listing any caps that were added.
+    """
+    missing = [cap for cap in PODMAN_REQUIRED_CAPS if cap not in cap_add]
+    if missing:
+        logger.warning("Podman DinD: adding required capabilities: %s", ", ".join(missing))
+        cap_add.extend(missing)
+    if "/dev/fuse" not in devices:
+        devices.append("/dev/fuse")
 
 
 def build_box_spec(
@@ -96,18 +123,15 @@ def build_box_spec(
     devices = list(config.devices)
 
     # Security
-    capabilities = (
-        list(config.security.capabilities) if config.security.capabilities is not None else None
-    )
+    cap_drop = list(config.security.cap_drop) if config.security.cap_drop else []
+    cap_add = list(config.security.cap_add) if config.security.cap_add else []
     seccomp_profile = config.security.seccomp_profile
     privileged = False
 
     # Podman DinD
     podman_enabled = config.podman or config.podman_docker_socket
     if podman_enabled:
-        privileged = True
-        if "/dev/fuse" not in devices:
-            devices.append("/dev/fuse")
+        _inject_podman_caps(cap_add, devices)
         mounts.append(Mount(source="yaas-podman-data", target="/var/lib/containers", type="volume"))
         environment["YAAS_PODMAN"] = "1"
     if config.podman_docker_socket:
@@ -135,7 +159,8 @@ def build_box_spec(
         cpus=config.resources.cpus,
         pids_limit=config.resources.pids_limit,
         privileged=privileged,
-        capabilities=capabilities,
+        cap_drop=cap_drop,
+        cap_add=cap_add,
         seccomp_profile=seccomp_profile,
     )
 
@@ -162,8 +187,12 @@ def build_container_spec(
     home = Path.home()
     sandbox_home = "/home"
 
+    skip_shared_volumes = config.base == "none"
+
     # Build mounts and collect supplementary groups
-    mounts, groups = _build_mounts(config, project_dir, home, sandbox_home)
+    mounts, groups = _build_mounts(
+        config, project_dir, home, sandbox_home, skip_shared_volumes=skip_shared_volumes
+    )
 
     # Build environment
     environment = _build_environment(config, project_dir, sandbox_home)
@@ -190,20 +219,15 @@ def build_container_spec(
             devices.extend(tool.devices)
 
     # Resolve security (start from config, may be overridden by podman mode)
-    capabilities = (
-        list(config.security.capabilities) if config.security.capabilities is not None else None
-    )
+    cap_drop = list(config.security.cap_drop) if config.security.cap_drop else []
+    cap_add = list(config.security.cap_add) if config.security.cap_add else []
     seccomp_profile = config.security.seccomp_profile
     privileged = False
 
-    # Podman DinD: use --privileged for nested containers.
-    # Selective caps (SYS_ADMIN, MKNOD, etc.) are insufficient — nested container
-    # runtimes need the full capability set, unconfined seccomp, and device access.
+    # Podman DinD: inject required capabilities for nested containers.
     podman_enabled = config.podman or config.podman_docker_socket
     if podman_enabled:
-        privileged = True
-        if "/dev/fuse" not in devices:
-            devices.append("/dev/fuse")
+        _inject_podman_caps(cap_add, devices)
         # Overlay-on-overlay is denied by the kernel — inner container storage
         # must live on a non-overlay filesystem. Named volume persists pulled images.
         mounts.append(Mount(source="yaas-podman-data", target="/var/lib/containers", type="volume"))
@@ -237,7 +261,8 @@ def build_container_spec(
         pids_limit=config.resources.pids_limit,
         # Security
         privileged=privileged,
-        capabilities=capabilities,
+        cap_drop=cap_drop,
+        cap_add=cap_add,
         seccomp_profile=seccomp_profile,
     )
 

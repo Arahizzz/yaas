@@ -72,10 +72,10 @@ def generate_quadlet(spec: ContainerSpec) -> str:
             lines.append(f"Mount={_format_mount(m)}")
 
     # Security
-    if spec.capabilities is not None:
-        lines.append("DropCapability=ALL")
-        for cap in spec.capabilities:
-            lines.append(f"AddCapability={cap}")
+    for cap in spec.cap_drop:
+        lines.append(f"DropCapability={cap}")
+    for cap in spec.cap_add:
+        lines.append(f"AddCapability={cap}")
 
     # PID limit (native quadlet directive)
     if spec.pids_limit:

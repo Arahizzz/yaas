@@ -137,10 +137,10 @@ class BaseRuntime(ABC):
         if spec.privileged:
             cmd.append("--privileged")
         else:
-            if spec.capabilities is not None:
-                cmd.extend(["--cap-drop", "ALL"])
-                for cap in spec.capabilities:
-                    cmd.extend(["--cap-add", cap])
+            for cap in spec.cap_drop:
+                cmd.extend(["--cap-drop", cap])
+            for cap in spec.cap_add:
+                cmd.extend(["--cap-add", cap])
             if spec.seccomp_profile:
                 cmd.extend(["--security-opt", f"seccomp={spec.seccomp_profile}"])
 

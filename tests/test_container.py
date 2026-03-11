@@ -828,35 +828,37 @@ class TestSecurityPassthrough:
     """Tests for security settings being passed to ContainerSpec."""
 
     def test_default_security_in_spec(self, mock_linux, clean_env, tmp_path: Path) -> None:
-        """Default config produces capabilities in spec."""
+        """Default config produces cap_drop/cap_add in spec."""
         config = Config()
         spec = build_container_spec(config, tmp_path, ["bash"])
 
-        assert spec.capabilities is not None
-        assert "CHOWN" in spec.capabilities
-        assert "KILL" in spec.capabilities
+        assert spec.cap_drop == ["ALL"]
+        assert "CHOWN" in spec.cap_add
+        assert "KILL" in spec.cap_add
         assert spec.seccomp_profile is None
 
     def test_custom_seccomp_profile(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Custom seccomp profile path is passed to spec."""
         config = Config(
             security=SecuritySettings(
-                capabilities=["CHOWN"],
+                cap_drop=["ALL"],
+                cap_add=["CHOWN"],
                 seccomp_profile="/etc/yaas/seccomp.json",
             ),
         )
         spec = build_container_spec(config, tmp_path, ["bash"])
         assert spec.seccomp_profile == "/etc/yaas/seccomp.json"
 
-    def test_none_capabilities_uses_runtime_defaults(
+    def test_empty_cap_lists_no_flags(
         self, mock_linux, clean_env, tmp_path: Path
     ) -> None:
-        """None capabilities means use runtime defaults (no flags generated)."""
+        """Empty cap lists mean no cap flags generated."""
         config = Config(
-            security=SecuritySettings(capabilities=None),
+            security=SecuritySettings(cap_drop=[], cap_add=[]),
         )
         spec = build_container_spec(config, tmp_path, ["bash"])
-        assert spec.capabilities is None
+        assert spec.cap_drop == []
+        assert spec.cap_add == []
 
     def test_tool_security_override(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Tool security override is reflected in ContainerSpec."""
@@ -864,12 +866,12 @@ class TestSecurityPassthrough:
             active_tool="claude",
             tools={
                 "claude": ToolConfig(
-                    security=SecuritySettings(capabilities=["CHOWN", "NET_RAW"]),
+                    security=SecuritySettings(cap_add=["CHOWN", "NET_RAW"]),
                 )
             },
         )
         spec = build_container_spec(config, tmp_path, ["bash"])
-        assert spec.capabilities == ["CHOWN", "NET_RAW"]
+        assert spec.cap_add == ["CHOWN", "NET_RAW"]
 
     def test_claude_tool_sets_is_sandbox(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """Claude tool env includes IS_SANDBOX=1 for sandbox-aware root check bypass."""

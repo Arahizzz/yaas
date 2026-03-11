@@ -128,11 +128,12 @@ class TestBoxConfigParsing:
 
     def test_box_with_security(self) -> None:
         config = _load_toml(
-            '[box.secure]\n[box.secure.security]\ncapabilities = ["CHOWN", "SETUID"]'
+            '[box.secure]\n[box.secure.security]\ncap_drop = ["ALL"]\ncap_add = ["CHOWN", "SETUID"]'
         )
         box = config.boxes["secure"]
         assert box.security is not None
-        assert box.security.capabilities == ["CHOWN", "SETUID"]
+        assert box.security.cap_drop == ["ALL"]
+        assert box.security.cap_add == ["CHOWN", "SETUID"]
 
 
 # ============================================================
@@ -190,7 +191,7 @@ class TestResolveBoxConfig:
         assert resolved.network_mode == "bridge"
 
     def test_base_none(self) -> None:
-        """base='none' starts with no caps and no network."""
+        """base='none' starts with cap_drop=ALL, no cap_add, and no network."""
         config = Config(
             ssh_agent=True,
             network_mode="host",
@@ -198,7 +199,8 @@ class TestResolveBoxConfig:
         )
         resolved = resolve_box_config(config, "locked")
         assert resolved.network_mode == "none"
-        assert resolved.security.capabilities == []
+        assert resolved.security.cap_drop == ["ALL"]
+        assert resolved.security.cap_add == []
         assert resolved.ssh_agent is False
 
     def test_base_none_with_overrides(self) -> None:
@@ -305,14 +307,15 @@ class TestBuildBoxSpec:
     def test_base_none_empty_caps(self, mock_linux, clean_env) -> None:
         config = Config(boxes={"locked": BoxSpec(base="none")})
         spec = build_box_spec(config, "locked", "yaas-box-locked")
-        assert spec.capabilities == []
+        assert spec.cap_drop == ["ALL"]
+        assert spec.cap_add == []
 
     def test_security_passthrough(self, mock_linux, clean_env) -> None:
         """Default security settings are passed through."""
         config = Config(boxes={"shell": BoxSpec()})
         spec = build_box_spec(config, "shell", "yaas-box-test")
-        assert spec.capabilities is not None
-        assert "CHOWN" in spec.capabilities
+        assert spec.cap_drop == ["ALL"]
+        assert "CHOWN" in spec.cap_add
 
     def test_resource_limits(self, mock_linux, clean_env) -> None:
         config = Config(
@@ -617,7 +620,8 @@ class TestToolBaseField:
         )
         resolved = resolve_effective_config(config)
         assert resolved.network_mode == "none"
-        assert resolved.security.capabilities == []
+        assert resolved.security.cap_drop == ["ALL"]
+        assert resolved.security.cap_add == []
 
     def test_tool_base_default_inherits(self) -> None:
         from yaas.config import ToolConfig, resolve_effective_config

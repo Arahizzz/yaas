@@ -148,14 +148,14 @@ class TestGenerateQuadlet:
         assert "Label=custom=value" in output
 
     def test_capabilities(self) -> None:
-        spec = _make_spec(capabilities=["NET_BIND_SERVICE", "CHOWN"])
+        spec = _make_spec(cap_drop=["ALL"], cap_add=["NET_BIND_SERVICE", "CHOWN"])
         output = generate_quadlet(spec)
         assert "DropCapability=ALL" in output
         assert "AddCapability=NET_BIND_SERVICE" in output
         assert "AddCapability=CHOWN" in output
 
-    def test_no_capabilities_when_none(self) -> None:
-        spec = _make_spec(capabilities=None)
+    def test_no_capabilities_when_empty(self) -> None:
+        spec = _make_spec()
         output = generate_quadlet(spec)
         assert "DropCapability=" not in output
         assert "AddCapability=" not in output

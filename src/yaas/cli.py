@@ -365,13 +365,15 @@ def _print_container_spec(spec: ContainerSpec) -> None:
         if spec.pids_limit:
             console.print(f"  pids_limit: {spec.pids_limit}")
 
-    has_security = spec.privileged or spec.capabilities or spec.seccomp_profile
+    has_security = spec.privileged or spec.cap_drop or spec.cap_add or spec.seccomp_profile
     if has_security:
         console.print("\n[bold]Security:[/]")
         if spec.privileged:
             console.print("  privileged: true")
-        if spec.capabilities:
-            console.print(f"  capabilities: {', '.join(spec.capabilities)}")
+        if spec.cap_drop:
+            console.print(f"  cap_drop: {', '.join(spec.cap_drop)}")
+        if spec.cap_add:
+            console.print(f"  cap_add: {', '.join(spec.cap_add)}")
         if spec.seccomp_profile:
             console.print(f"  seccomp_profile: {spec.seccomp_profile}")
 
