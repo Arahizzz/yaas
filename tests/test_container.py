@@ -274,6 +274,91 @@ class TestParseMountSpecAutoDst:
         assert mount.target == "/home"
 
 
+class TestParseMountSpecExtended:
+    """Tests for _parse_mount_spec with extended type=key,value syntax."""
+
+    def test_volume_mount(self) -> None:
+        """type=volume,src=name,dst=/path → volume mount."""
+        mount = _parse_mount_spec("type=volume,src=yaas-home,dst=/home", Path("/project"))
+        assert mount is not None
+        assert mount.source == "yaas-home"
+        assert mount.target == "/home"
+        assert mount.type == "volume"
+        assert mount.read_only is False
+
+    def test_volume_mount_readonly(self) -> None:
+        """type=volume with readonly=true."""
+        mount = _parse_mount_spec(
+            "type=volume,src=data,dst=/data,readonly=true", Path("/project")
+        )
+        assert mount is not None
+        assert mount.type == "volume"
+        assert mount.read_only is True
+
+    def test_tmpfs_mount(self) -> None:
+        """type=tmpfs,dst=/tmp → tmpfs mount."""
+        mount = _parse_mount_spec("type=tmpfs,dst=/tmp", Path("/project"))
+        assert mount is not None
+        assert mount.source == ""
+        assert mount.target == "/tmp"
+        assert mount.type == "tmpfs"
+
+    def test_bind_mount(self, tmp_path: Path) -> None:
+        """type=bind,src=/abs,dst=/data → bind mount."""
+        src = tmp_path / "data"
+        src.mkdir()
+        mount = _parse_mount_spec(f"type=bind,src={src},dst=/data", Path("/project"))
+        assert mount is not None
+        assert mount.source == str(src)
+        assert mount.target == "/data"
+        assert mount.type == "bind"
+
+    def test_bind_mount_readonly(self, tmp_path: Path) -> None:
+        """type=bind with ro=true."""
+        src = tmp_path / "data"
+        src.mkdir()
+        mount = _parse_mount_spec(f"type=bind,src={src},dst=/data,ro=true", Path("/project"))
+        assert mount is not None
+        assert mount.read_only is True
+
+    def test_bind_mount_missing_source(self, tmp_path: Path) -> None:
+        """type=bind with non-existent source returns None."""
+        result = _parse_mount_spec(
+            f"type=bind,src={tmp_path}/nonexistent,dst=/data", Path("/project")
+        )
+        assert result is None
+
+    def test_aliases_source_destination(self) -> None:
+        """source/destination aliases work."""
+        mount = _parse_mount_spec(
+            "type=volume,source=my-vol,destination=/mnt", Path("/project")
+        )
+        assert mount is not None
+        assert mount.source == "my-vol"
+        assert mount.target == "/mnt"
+
+    def test_alias_target(self) -> None:
+        """target alias works for destination."""
+        mount = _parse_mount_spec("type=volume,src=vol,target=/mnt", Path("/project"))
+        assert mount is not None
+        assert mount.target == "/mnt"
+
+    def test_missing_dst_returns_none(self) -> None:
+        """Missing destination returns None."""
+        result = _parse_mount_spec("type=volume,src=name", Path("/project"))
+        assert result is None
+
+    def test_missing_type_returns_none(self) -> None:
+        """Missing type returns None."""
+        result = _parse_mount_spec("src=name,dst=/data", Path("/project"))
+        assert result is None
+
+    def test_unknown_type_returns_none(self) -> None:
+        """Unknown mount type returns None."""
+        result = _parse_mount_spec("type=nfs,src=name,dst=/data", Path("/project"))
+        assert result is None
+
+
 class TestClipboardSupport:
     """Tests for clipboard support functionality.
 

@@ -692,7 +692,7 @@ def _add_clipboard_environment(env: dict[str, str]) -> None:
 def _parse_mount_spec(spec: str, project_dir: Path, sandbox_home: str = "/home") -> Mount | None:
     """Parse mount spec with unified format.
 
-    Formats:
+    Bind mount formats (colon-separated):
     - "~/.claude"            → auto-dst: ~/.claude → /home/.claude
     - "~/.claude:ro"         → auto-dst + read-only
     - "~/a:/data"            → explicit src:dst
@@ -700,11 +700,20 @@ def _parse_mount_spec(spec: str, project_dir: Path, sandbox_home: str = "/home")
     - "./rel:/container"     → relative to project_dir
     - "/abs:/container:ro"   → absolute + read-only
 
+    Extended format (key=value, comma-separated):
+    - "type=volume,src=yaas-home,dst=/home"       → named volume
+    - "type=tmpfs,dst=/tmp"                        → tmpfs mount
+    - "type=bind,src=/abs,dst=/data,readonly=true" → bind mount
+
     Auto-dst: when no explicit destination is given and src starts with ~,
     the destination is computed as sandbox_home + path relative to home.
     Container destinations always start with /, so :ro as the second part
     is unambiguous (it can't be a destination).
     """
+    # Extended key=value format: "type=volume,src=name,dst=/path"
+    if "type=" in spec:
+        return _parse_extended_mount_spec(spec, project_dir)
+
     parts = spec.split(":")
     read_only = False
 
@@ -749,3 +758,47 @@ def _parse_mount_spec(spec: str, project_dir: Path, sandbox_home: str = "/home")
             dst = str(src_path)
 
     return Mount(str(src_path), dst, read_only=read_only)
+
+
+def _parse_extended_mount_spec(spec: str, project_dir: Path) -> Mount | None:
+    """Parse extended key=value mount spec (e.g. type=volume,src=name,dst=/path)."""
+    opts: dict[str, str] = {}
+    for pair in spec.split(","):
+        if "=" not in pair:
+            logger.warning("Invalid mount option (missing '='): %s", pair)
+            return None
+        key, value = pair.split("=", 1)
+        opts[key.strip()] = value.strip()
+
+    mount_type = opts.get("type")
+    if not mount_type:
+        logger.warning("Mount spec missing 'type': %s", spec)
+        return None
+
+    dst = opts.get("dst") or opts.get("destination") or opts.get("target")
+    if not dst:
+        logger.warning("Mount spec missing destination (dst/destination/target): %s", spec)
+        return None
+
+    ro_value = opts.get("readonly") or opts.get("ro") or "false"
+    read_only = ro_value.lower() in ("true", "1", "yes")
+
+    src = opts.get("src") or opts.get("source") or ""
+
+    if mount_type == "volume":
+        return Mount(src, dst, type="volume", read_only=read_only)
+
+    if mount_type == "tmpfs":
+        return Mount("", dst, type="tmpfs", read_only=read_only)
+
+    if mount_type == "bind":
+        src_path = Path(src).expanduser()
+        if not src_path.is_absolute():
+            src_path = project_dir / src_path
+        if not src_path.exists():
+            logger.warning("Mount source does not exist, skipping: %s", src_path)
+            return None
+        return Mount(str(src_path), dst, read_only=read_only)
+
+    logger.warning("Unknown mount type '%s': %s", mount_type, spec)
+    return None
