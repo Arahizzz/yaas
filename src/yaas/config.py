@@ -242,22 +242,24 @@ def _get_base_config(base: str) -> Config:
 
 
 def resolve_effective_config(config: Config) -> Config:
-    """Apply active tool overrides to produce effective config.
+    """Apply base config and active tool overrides to produce effective config.
 
-    Returns a new Config with tool overrides applied on top of global/project
+    Returns a new Config with base and tool overrides applied on top of global/project
     settings. Mounts are NOT merged here (they use different parsing logic
     and are handled in container.py).
 
-    Priority: global → project → tool overrides (this function) → CLI flags (caller).
+    Priority: global → project → tool overrides → CLI flags (caller).
+    config.base (set by CLI --base) takes priority over tool.base (TOML).
     """
-    if not config.active_tool:
+    tool = config.tools.get(config.active_tool) if config.active_tool else None
+
+    # config.base (CLI --base or top-level TOML) takes priority over tool.base
+    base = config.base or (tool.base if tool else None)
+
+    # Nothing to resolve — no base override and no tool overrides
+    if (base is None or base == "default") and not tool:
         return config
 
-    tool = config.tools.get(config.active_tool)
-    if not tool:
-        return config
-
-    base = tool.base
     if base is not None and base != "default":
         resolved = _get_base_config(base)
         resolved.tools = config.tools
@@ -267,7 +269,8 @@ def resolve_effective_config(config: Config) -> Config:
     else:
         resolved = replace(config)
 
-    _apply_overrides(resolved, tool)
+    if tool:
+        _apply_overrides(resolved, tool)
     return resolved
 
 
