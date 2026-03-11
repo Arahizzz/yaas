@@ -30,12 +30,15 @@ from .worktree import (
 
 logger = get_logger()
 
-# Capabilities required for rootless Podman-in-Podman (replaces --privileged)
+# Capabilities required for rootless Podman-in-Podman (replaces --privileged).
+# Inner containers use --network host (configured in setup-podman.sh).
 PODMAN_REQUIRED_CAPS = [
     "SYS_ADMIN",
     "MKNOD",
     "SYS_CHROOT",
     "NET_ADMIN",
+    "SETFCAP",
+    "SETPCAP",
     "SETUID",
     "SETGID",
     "CHOWN",
@@ -54,11 +57,16 @@ LXCFS_PROC_FILES = (
 )
 
 
-def _inject_podman_caps(cap_add: list[str], devices: list[str]) -> None:
-    """Inject capabilities and devices required for Podman-in-Podman.
+def _inject_podman_requirements(
+    cap_add: list[str],
+    devices: list[str],
+    seccomp_profile: str | None,
+) -> str | None:
+    """Inject capabilities, devices, and seccomp settings for Podman-in-Podman.
 
-    Adds missing required caps to cap_add and /dev/fuse to devices.
-    Logs a warning listing any caps that were added.
+    Returns the (possibly updated) seccomp_profile value.
+    Inner container runtimes (crun/netavark) need setns and other syscalls
+    blocked by the default seccomp profile, so we set seccomp=unconfined.
     """
     missing = [cap for cap in PODMAN_REQUIRED_CAPS if cap not in cap_add]
     if missing:
@@ -66,6 +74,9 @@ def _inject_podman_caps(cap_add: list[str], devices: list[str]) -> None:
         cap_add.extend(missing)
     if "/dev/fuse" not in devices:
         devices.append("/dev/fuse")
+    if seccomp_profile is None:
+        seccomp_profile = "unconfined"
+    return seccomp_profile
 
 
 def build_box_spec(
@@ -131,7 +142,7 @@ def build_box_spec(
     # Podman DinD
     podman_enabled = config.podman or config.podman_docker_socket
     if podman_enabled:
-        _inject_podman_caps(cap_add, devices)
+        seccomp_profile = _inject_podman_requirements(cap_add, devices, seccomp_profile)
         mounts.append(Mount(source="yaas-podman-data", target="/var/lib/containers", type="volume"))
         environment["YAAS_PODMAN"] = "1"
     if config.podman_docker_socket:
@@ -227,7 +238,7 @@ def build_container_spec(
     # Podman DinD: inject required capabilities for nested containers.
     podman_enabled = config.podman or config.podman_docker_socket
     if podman_enabled:
-        _inject_podman_caps(cap_add, devices)
+        seccomp_profile = _inject_podman_requirements(cap_add, devices, seccomp_profile)
         # Overlay-on-overlay is denied by the kernel — inner container storage
         # must live on a non-overlay filesystem. Named volume persists pulled images.
         mounts.append(Mount(source="yaas-podman-data", target="/var/lib/containers", type="volume"))
