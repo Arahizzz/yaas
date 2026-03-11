@@ -124,7 +124,8 @@ cpus = 4.0
 
 # Security overrides (field-level merge with global)
 [tools.claude.security]
-capabilities = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID", "NET_RAW"]
+cap_drop = ["ALL"]
+cap_add = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID", "NET_RAW"]
 ```
 
 Resource and security overrides merge at the field level — only the fields you specify are overridden, the rest inherit from the global/project config.
@@ -151,9 +152,35 @@ pids_limit = 500
 ```
 
 The `base` field controls config inheritance:
-- `"default"` — inherits from global/project config (default)
-- `"minimal"` — starts from a hardcoded baseline, ignoring global config
-- `"none"` — bare container with no shared volumes or optional mounts
+- `"default"` — inherits all global/project config settings (default)
+- `"minimal"` — starts from hardcoded `Config()` defaults, ignoring global config. Gets default `cap_drop`/`cap_add`, shared volumes, bridge networking
+- `"none"` — maximum isolation: `cap_drop=["ALL"]`, no `cap_add`, `network_mode="none"`, no shared volumes (`/home`, `/nix`), no mise config mount
+
+Example — box with `base = "none"` that needs sudo:
+
+```toml
+[box.mybox]
+base = "none"
+[box.mybox.security]
+cap_add = ["SETUID", "SETGID", "CHOWN", "DAC_OVERRIDE", "FOWNER"]
+```
+
+## Security Settings
+
+The `[security]` section controls Linux capabilities via `cap_drop` and `cap_add`, which map directly to `--cap-drop` and `--cap-add` flags in Docker/Podman:
+
+```toml
+[security]
+cap_drop = ["ALL"]         # Drop all capabilities first
+cap_add = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID"]
+seccomp_profile = "/path/to/custom.json"  # Optional custom seccomp profile
+```
+
+**Defaults:** `cap_drop = ["ALL"]` with a safe set of capabilities added back (CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, NET_BIND_SERVICE, SETGID, SETUID).
+
+**Override semantics:** When a tool or box specifies `cap_drop` or `cap_add`, the value **replaces** the inherited list entirely. This lets each tool/box specify exactly what it needs.
+
+**Podman DinD:** When `podman = true`, YAAS automatically injects the capabilities required for nested container runtimes (SYS_ADMIN, MKNOD, SYS_CHROOT, NET_ADMIN, etc.) instead of using `--privileged`.
 
 ## Mise Integration
 

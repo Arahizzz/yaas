@@ -37,10 +37,11 @@
 # pids_limit = 1000
 
 # Security hardening
-# When set, capabilities specifies the exact cap set (drops ALL, adds back each listed cap).
-# Omit to use container runtime defaults.
+# cap_drop: list of capabilities to drop (default: ["ALL"])
+# cap_add: list of capabilities to add back (default: common safe set)
 # [security]
-# capabilities = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID"]
+# cap_drop = ["ALL"]
+# cap_add = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID"]
 # seccomp_profile = "/path/to/custom.json"  # omit for runtime default
 
 # Global mounts (always applied)
@@ -83,7 +84,8 @@
 #   memory = "16g"
 #   cpus = 4.0
 #   [tools.<name>.security]
-#   capabilities = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID", "NET_RAW"]
+#   cap_drop = ["ALL"]
+#   cap_add = ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "NET_BIND_SERVICE", "SETGID", "SETUID", "NET_RAW"]
 
 [tools.shell]
 command = ["bash"]
