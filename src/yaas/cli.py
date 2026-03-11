@@ -140,6 +140,7 @@ def run(
     ),
     env: list[str] | None = typer.Option(None, "--env", "-e", help="Ad-hoc env (KEY=VALUE or KEY)"),
     no_project: bool = typer.Option(False, "--no-project", help="Don't mount project directory"),
+    base: str | None = typer.Option(None, "--base", help="Config base: default, minimal, none"),
     runtime: RuntimeChoice | None = typer.Option(None, "--runtime", help="Container runtime"),
 ) -> None:
     """Run a command in the sandbox."""
@@ -157,6 +158,7 @@ def run(
     _apply_cli_flags(
         config,
         config,
+        base=base,
         ssh_agent=ssh_agent,
         git_config=git_config,
         podman=podman,
@@ -222,6 +224,9 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
         no_project: bool = typer.Option(
             False, "--no-project", help="Don't mount project directory"
         ),
+        base: str | None = typer.Option(
+            None, "--base", help="Config base: default, minimal, none"
+        ),
         runtime: RuntimeChoice | None = typer.Option(None, "--runtime", help="Container runtime"),
     ) -> None:
         """Run AI tool in sandbox with YOLO mode (auto-confirm)."""
@@ -231,6 +236,10 @@ def _create_tool_command(tool: str, tool_config: ToolConfig) -> None:
 
         project_dir, worktree_name = _resolve_worktree(worktree)
         config = load_config(project_dir)
+
+        # CLI --base must be set before resolution so it takes priority over tool TOML base
+        if base is not None:
+            config.base = base
 
         # Set active tool and resolve overrides before CLI flags
         config.active_tool = tool
@@ -445,13 +454,12 @@ def box_create(
     if effective_spec not in config.boxes:
         config.boxes[effective_spec] = BoxSpec()
 
-    # Apply base and CLI flag overrides to box spec
+    # Apply CLI flag overrides to box spec
     box_spec = config.boxes[effective_spec]
-    if base is not None:
-        box_spec.base = base
     _apply_cli_flags(
         box_spec,
         config,
+        base=base,
         ssh_agent=ssh_agent,
         git_config=git_config,
         podman=podman,
@@ -566,11 +574,10 @@ def box_config(
         config.boxes[effective_spec] = BoxSpec()
 
     box_spec = config.boxes[effective_spec]
-    if base is not None:
-        box_spec.base = base
     _apply_cli_flags(
         box_spec,
         config,
+        base=base,
         ssh_agent=ssh_agent,
         git_config=git_config,
         podman=podman,
@@ -883,6 +890,7 @@ def _apply_cli_flags(
     target: Config | BoxSpec,
     config: Config,
     *,
+    base: str | None = None,
     ssh_agent: bool = False,
     git_config: bool = False,
     podman: bool = False,
@@ -903,6 +911,8 @@ def _apply_cli_flags(
     Boolean/scalar overrides go to `target`. List/env overrides always go to `config`
     (since they're merged at the config level in container.py).
     """
+    if base is not None:
+        target.base = base
     if ssh_agent:
         target.ssh_agent = True
     if git_config:
