@@ -78,19 +78,17 @@ if [[ -n "${DISPLAY:-}" && -d "/run/host/.X11-unix" ]]; then
 fi
 
 # ============================================================
-# Volume ownership (only when process drops privileges)
+# Volume ownership
 # ============================================================
-# Docker rootful: setpriv drops to SHELL_UID at exec time, so volumes
-# must be owned by SHELL_UID for the unprivileged process to write.
-# Podman/Docker rootless/krun: process stays UID 0, volumes are already
-# accessible. Chowning would map to subordinate UIDs on the host.
-if [[ "$SHELL_UID" != "0" ]]; then
-    if [[ -d /nix/store && "$(stat -c '%u' /nix/store)" != "$SHELL_UID" ]]; then
-        sudo chown -R "$SHELL_UID:$SHELL_GID" /nix 2>/dev/null || true
-    fi
-    if [[ "$(stat -c '%u' "$HOME")" != "$SHELL_UID" ]]; then
-        sudo chown -R --one-file-system "$SHELL_UID:$SHELL_GID" "$HOME" 2>/dev/null || true
-    fi
+# Ensure persistent volumes are owned by the UID that will use them.
+# Docker rootful: setpriv drops to SHELL_UID at exec time.
+# Rootless runtimes: process is UID 0, but volumes may be owned by a
+# different UID (e.g. from a previous run or image initialisation).
+if [[ -d /nix/store && "$(stat -c '%u' /nix/store)" != "$SHELL_UID" ]]; then
+    sudo chown -R "$SHELL_UID:$SHELL_GID" /nix 2>/dev/null || true
+fi
+if [[ "$(stat -c '%u' "$HOME")" != "$SHELL_UID" ]]; then
+    sudo chown -R --one-file-system "$SHELL_UID:$SHELL_GID" "$HOME" 2>/dev/null || true
 fi
 
 # Source profile to add nix to PATH
