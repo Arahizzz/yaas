@@ -70,7 +70,7 @@ def _inject_podman_requirements(
     """
     missing = [cap for cap in PODMAN_REQUIRED_CAPS if cap not in cap_add]
     if missing:
-        logger.warning("Podman DinD: adding required capabilities: %s", ", ".join(missing))
+        logger.debug("Podman DinD: adding required capabilities: %s", ", ".join(missing))
         cap_add.extend(missing)
     if "/dev/fuse" not in devices:
         devices.append("/dev/fuse")
