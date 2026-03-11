@@ -12,9 +12,13 @@
 CONTAINERS_CONF_DIR="/etc/containers"
 sudo mkdir -p "$CONTAINERS_CONF_DIR"
 
+# Read current oom_score_adj so nested containers don't try to lower it
+# (podman defaults to 0, but the kernel rejects lowering below the parent's value).
+OOM_SCORE_ADJ="$(cat /proc/self/oom_score_adj 2>/dev/null || echo 0)"
+
 if [[ "${YAAS_RUNTIME}" == "podman-krun" ]]; then
     # krun VM has a real kernel (KVM) — use proper namespace isolation.
-    sudo tee "$CONTAINERS_CONF_DIR/containers.conf" >/dev/null <<'CONF'
+    sudo tee "$CONTAINERS_CONF_DIR/containers.conf" >/dev/null <<CONF
 [containers]
 netns = "host"
 userns = "host"
@@ -23,6 +27,7 @@ utsns = "private"
 cgroupns = "private"
 cgroups = "enabled"
 log_driver = "k8s-file"
+oom_score_adj = ${OOM_SCORE_ADJ}
 # krun kernel lacks POSIX mqueue support.
 mounts = ["type=tmpfs,destination=/dev/mqueue"]
 
@@ -34,7 +39,7 @@ CONF
 else
     # Regular podman/docker — all host namespaces (can't create inside userns).
     # Based on: https://github.com/containers/image_build/blob/main/podman/containers.conf
-    sudo tee "$CONTAINERS_CONF_DIR/containers.conf" >/dev/null <<'CONF'
+    sudo tee "$CONTAINERS_CONF_DIR/containers.conf" >/dev/null <<CONF
 [containers]
 netns = "host"
 userns = "host"
@@ -43,6 +48,7 @@ utsns = "host"
 cgroupns = "host"
 cgroups = "disabled"
 log_driver = "k8s-file"
+oom_score_adj = ${OOM_SCORE_ADJ}
 # krun kernel lacks POSIX mqueue support.
 mounts = ["type=tmpfs,destination=/dev/mqueue"]
 
