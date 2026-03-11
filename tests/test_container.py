@@ -419,11 +419,11 @@ class TestWorktreeMounts:
         assert wt_mount.target == str(wt_base)
         assert wt_mount.read_only is False
 
-    def test_worktree_base_skipped_when_missing(self, tmp_path: Path) -> None:
-        """Normal session: no mount added when worktree base dir doesn't exist."""
+    def test_worktree_base_created_when_missing(self, tmp_path: Path) -> None:
+        """Normal session: worktree base dir is created and mounted when missing."""
         git_root = tmp_path / "repo"
         git_root.mkdir()
-        wt_base = tmp_path / "worktrees" / "abc123"  # Not created
+        wt_base = tmp_path / "worktrees" / "abc123"  # Not created yet
         project_dir = git_root
 
         mounts: list[Mount] = []
@@ -434,10 +434,12 @@ class TestWorktreeMounts:
             skip = _add_worktree_mounts(mounts, project_dir, read_only=False)
 
         assert skip is False
-        assert len(mounts) == 0
+        assert wt_base.exists()
+        wt_mount = next((m for m in mounts if m.source == str(wt_base)), None)
+        assert wt_mount is not None
 
-    def test_normal_session_respects_readonly(self, tmp_path: Path) -> None:
-        """Normal session: worktree base mount respects read_only flag."""
+    def test_normal_session_wt_base_always_rw(self, tmp_path: Path) -> None:
+        """Normal session: worktree base is always RW regardless of read_only flag."""
         git_root = tmp_path / "repo"
         git_root.mkdir()
         wt_base = tmp_path / "worktrees" / "abc123"
@@ -453,10 +455,10 @@ class TestWorktreeMounts:
 
         wt_mount = next((m for m in mounts if m.source == str(wt_base)), None)
         assert wt_mount is not None
-        assert wt_mount.read_only is True
+        assert wt_mount.read_only is False
 
-    def test_worktree_session_mounts_main_git_dir(self, tmp_path: Path) -> None:
-        """Worktree session: main repo's .git dir is mounted read-write."""
+    def test_worktree_session_mounts_main_repo(self, tmp_path: Path) -> None:
+        """Worktree session: main repo is mounted."""
         main_repo = tmp_path / "repo"
         main_repo.mkdir()
         wt_base = tmp_path / "worktrees" / "abc123"
@@ -471,11 +473,10 @@ class TestWorktreeMounts:
         ):
             _add_worktree_mounts(mounts, project_dir, read_only=False)
 
-        git_dir = str(main_repo / ".git")
-        git_mount = next((m for m in mounts if m.source == git_dir), None)
-        assert git_mount is not None
-        assert git_mount.target == git_dir
-        assert git_mount.read_only is False
+        repo_mount = next((m for m in mounts if m.source == str(main_repo)), None)
+        assert repo_mount is not None
+        assert repo_mount.target == str(main_repo)
+        assert repo_mount.read_only is False
 
     def test_worktree_session_mounts_wt_base(self, tmp_path: Path) -> None:
         """Worktree session: worktree base dir is mounted read-write."""
@@ -518,8 +519,8 @@ class TestWorktreeMounts:
         project_mount = next((m for m in mounts if m.source == str(project_dir)), None)
         assert project_mount is None
 
-    def test_worktree_session_respects_readonly(self, tmp_path: Path) -> None:
-        """Worktree session: worktree base dir respects readonly flag."""
+    def test_worktree_session_readonly_applies_to_main_repo(self, tmp_path: Path) -> None:
+        """Worktree session: read_only applies to main repo, wt_base is always RW."""
         main_repo = tmp_path / "repo"
         main_repo.mkdir()
         wt_base = tmp_path / "worktrees" / "abc123"
@@ -534,9 +535,15 @@ class TestWorktreeMounts:
         ):
             _add_worktree_mounts(mounts, project_dir, read_only=True)
 
+        # wt_base is always RW (agents need to create worktrees)
         wt_mount = next((m for m in mounts if m.source == str(wt_base)), None)
         assert wt_mount is not None
-        assert wt_mount.read_only is True
+        assert wt_mount.read_only is False
+
+        # main_repo respects the read_only flag
+        repo_mount = next((m for m in mounts if m.source == str(main_repo)), None)
+        assert repo_mount is not None
+        assert repo_mount.read_only is True
 
     def test_not_a_git_repo(self, tmp_path: Path) -> None:
         """Non-git directory: no worktree mounts added."""
@@ -570,9 +577,8 @@ class TestWorktreeMounts:
             skip = _add_worktree_mounts(mounts, symlink_dir, read_only=False)
 
         assert skip is True
-        git_dir = str(main_repo / ".git")
-        git_mount = next((m for m in mounts if m.source == git_dir), None)
-        assert git_mount is not None
+        repo_mount = next((m for m in mounts if m.source == str(main_repo)), None)
+        assert repo_mount is not None
 
 
 class TestWorktreeMountsIntegration:
@@ -609,17 +615,16 @@ class TestWorktreeMountsIntegration:
             spec = build_container_spec(config, project_dir, ["bash"])
 
         sources = [m.source for m in spec.mounts]
-        git_dir = str(main_repo / ".git")
-        # Main repo .git dir and wt_base should be present
-        assert git_dir in sources
+        # Main repo and wt_base should be present
+        assert str(main_repo) in sources
         assert str(wt_base) in sources
         # project_dir should NOT be separately mounted (covered by wt_base)
         project_mounts = [m for m in spec.mounts if m.source == str(project_dir)]
         assert project_mounts == []
 
-        # Verify read-only flags
-        git_mount = next(m for m in spec.mounts if m.source == git_dir)
-        assert git_mount.read_only is False
+        # main_repo respects readonly, wt_base is always RW
+        repo_mount = next(m for m in spec.mounts if m.source == str(main_repo))
+        assert repo_mount.read_only is False
         wt_mount = next(m for m in spec.mounts if m.source == str(wt_base))
         assert wt_mount.read_only is False
 
@@ -641,10 +646,10 @@ class TestWorktreeMountsIntegration:
         assert str(wt_base) in sources
 
     def test_normal_session_no_worktrees(self, mock_linux, clean_env, tmp_path: Path) -> None:
-        """Normal session without worktrees: only project_dir mounted."""
+        """Normal session without worktrees: project_dir and wt_base mounted."""
         main_repo = tmp_path / "repo"
         main_repo.mkdir()
-        wt_base = tmp_path / "worktrees" / "abc123"  # Does not exist
+        wt_base = tmp_path / "worktrees" / "abc123"  # Does not exist yet
         project_dir = main_repo
 
         config = Config()
@@ -653,7 +658,9 @@ class TestWorktreeMountsIntegration:
 
         sources = [m.source for m in spec.mounts]
         assert str(project_dir) in sources
-        assert str(wt_base) not in sources
+        # wt_base is now always created and mounted
+        assert str(wt_base) in sources
+        assert wt_base.exists()
 
 
 class TestActiveToolScoping:

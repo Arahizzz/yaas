@@ -1,5 +1,6 @@
 """Tests for worktree module."""
 
+import os
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -20,6 +21,14 @@ from yaas.worktree import (
     remove_worktree,
     repair_worktrees,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_worktree_env():
+    """Ensure YAAS_WORKTREE_BASE doesn't leak from host into tests."""
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("YAAS_WORKTREE_BASE", None)
+        yield
 
 
 @pytest.fixture
@@ -117,6 +126,16 @@ def test_get_worktree_base_dir(git_repo: Path) -> None:
     project_hash = get_project_hash(git_repo)
 
     assert base_dir == WORKTREES_DIR / project_hash
+
+
+def test_get_worktree_base_dir_env_override(git_repo: Path) -> None:
+    """Test YAAS_WORKTREE_BASE env var overrides computed path."""
+    override_path = "/custom/worktree/base"
+
+    with patch.dict("os.environ", {"YAAS_WORKTREE_BASE": override_path}):
+        base_dir = get_worktree_base_dir(git_repo)
+
+    assert base_dir == Path(override_path)
 
 
 def test_list_worktrees(git_repo: Path) -> None:

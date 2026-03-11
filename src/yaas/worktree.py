@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 
@@ -54,10 +55,17 @@ def get_worktree_base_dir(
 ) -> Path:
     """Return WORKTREES_DIR / project_hash.
 
+    If the YAAS_WORKTREE_BASE environment variable is set, returns that path
+    directly. This is used inside containers where the host worktree directory
+    is mounted at a path that differs from the container's computed WORKTREES_DIR.
+
     Args:
         project_dir: Project directory to resolve main repo from.
         main_repo: Pre-resolved main repo root to avoid a redundant subprocess call.
     """
+    env_override = os.environ.get("YAAS_WORKTREE_BASE")
+    if env_override:
+        return Path(env_override)
     if main_repo is None:
         main_repo = get_main_repo_root(project_dir)
     hash_digest = hashlib.sha256(str(main_repo).encode()).hexdigest()[:12]

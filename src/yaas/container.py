@@ -285,16 +285,9 @@ def _add_worktree_mounts(
 ) -> bool:
     """Add worktree-related mounts and return whether to skip the project_dir mount.
 
-    For worktree sessions (project_dir is inside the worktree base dir):
-    - Mount the main repo's .git directory read-write (needed for shared objects, refs,
-      worktree state, and lock files). The working tree is not mounted at all.
-    - Mount the worktree base dir with the caller's read_only setting
-    - Signal to skip the normal project_dir mount (already covered by wt_base)
-
-    For normal sessions:
-    - Mount the worktree base dir with the caller's read_only setting if it exists
-      (prevents git marking worktrees as prunable inside the container)
-    - Signal to keep the normal project_dir mount
+    Always mounts the worktree base directory (RW) so agents can create and switch
+    into worktrees from inside a YAAS session. For worktree sessions, also mounts the
+    original project directory so agents can see the main codebase.
 
     Returns True if the project_dir mount should be skipped.
     """
@@ -308,6 +301,12 @@ def _add_worktree_mounts(
     resolved_project = project_dir.resolve()
     resolved_wt_base = wt_base.resolve()
 
+    # Always ensure wt_base exists so agents can create worktrees
+    wt_base.mkdir(parents=True, exist_ok=True)
+
+    # Always mount wt_base as RW (agents need to create worktrees)
+    mounts.append(Mount(str(resolved_wt_base), str(resolved_wt_base)))
+
     try:
         resolved_project.relative_to(resolved_wt_base)
         is_worktree_session = True
@@ -315,16 +314,9 @@ def _add_worktree_mounts(
         is_worktree_session = False
 
     if is_worktree_session:
-        # Mount main repo's .git dir read-write for shared objects/refs/worktree state
-        git_dir = main_repo / ".git"
-        mounts.append(Mount(str(git_dir), str(git_dir)))
-        # Mount worktree base dir using resolved path (covers this worktree + siblings)
-        mounts.append(Mount(str(resolved_wt_base), str(resolved_wt_base), read_only=read_only))
+        # Mount the original project so agents can see the main codebase
+        mounts.append(Mount(str(main_repo), str(main_repo), read_only=read_only))
         return True
-
-    # Normal session: mount worktree base dir if it exists (use resolved path)
-    if wt_base.exists():
-        mounts.append(Mount(str(resolved_wt_base), str(resolved_wt_base), read_only=read_only))
 
     return False
 
@@ -566,6 +558,11 @@ def _build_preamble(
     if project_dir is not None:
         ro = "read-only" if config.readonly_project else "read-write"
         lines.append(f"- Project: {project_dir} ({ro})")
+        try:
+            wt_base = get_worktree_base_dir(project_dir)
+            lines.append(f"- Worktrees: {wt_base.resolve()}")
+        except (WorktreeError, OSError):
+            pass
     else:
         lines.append("- Project: none (no project directory mounted)")
 
@@ -628,6 +625,12 @@ def _build_environment(
         env["PROJECT_PATH"] = str(project_dir)
         # Trust project mise configs automatically
         env["MISE_TRUSTED_CONFIG_PATHS"] = str(project_dir)
+        # Tell yaas CLI inside container where worktrees are mounted
+        try:
+            wt_base = get_worktree_base_dir(project_dir)
+            env["YAAS_WORKTREE_BASE"] = str(wt_base.resolve())
+        except (WorktreeError, OSError):
+            pass
 
     # Forward terminal info
     if term := os.environ.get("TERM"):
