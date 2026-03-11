@@ -262,6 +262,7 @@ def resolve_effective_config(config: Config) -> Config:
         resolved = _get_base_config(base)
         resolved.tools = config.tools
         resolved.boxes = config.boxes
+        resolved.active_tool = config.active_tool
         resolved.base = base
     else:
         resolved = replace(config)
