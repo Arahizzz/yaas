@@ -107,13 +107,14 @@ if [[ ! -d "${MISE_DATA_DIR}/plugins/nix" ]]; then
     mise plugin install nix https://github.com/jbadeau/mise-nix.git 2>/dev/null || true
 fi
 
-# Activate mise — adds shims to PATH and loads env vars from [env] section
-eval "$(mise activate bash)"
-
 # Box containers: install all configured tools on startup (idempotent, fast if already installed)
 if [[ "${YAAS_BOX:-}" == "1" ]]; then
     mise install || true
 fi
+
+# Activate mise — adds shims to PATH and loads env vars from [env] section.
+# Must run AFTER mise install so activate sees installed tools and updates PATH.
+eval "$(mise activate bash)"
 
 # ============================================================
 # Podman DinD setup (if requested)
