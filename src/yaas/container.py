@@ -350,7 +350,11 @@ def _build_mounts(
     skip_shared_volumes: bool = False,
 ) -> tuple[list[Mount], list[int]]:
     """Assemble all mounts and supplementary groups."""
-    mounts: list[Mount] = []
+    mounts: list[Mount] = [
+        # Fresh /run on every start (like systemd tmpfs); prevents stale runtime
+        # state (e.g. Podman boot ID cache) from persisting across box restarts.
+        Mount("", "/run", type="tmpfs"),
+    ]
     groups: list[int] = []
 
     if project_dir is not None:
