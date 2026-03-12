@@ -38,7 +38,7 @@ delta = "latest"
 # "npm:@google/gemini-cli" = "latest"
 
 # Docker CLI for Docker-outside-Docker (host socket mount)
-# docker-cli = "latest"
+# "nix:docker-client" = "latest"
 
 [settings]
 idiomatic_version_file_enable_tools = ["node", "python", "go", "php", "dotnet", "java", "ruby"] # https://mise.jdx.dev/configuration.html#idiomatic-version-files
