@@ -92,6 +92,15 @@ class TestBuildContainerSpec:
         assert nix_mount is not None
         assert nix_mount.source == NIX_VOLUME
 
+    def test_run_tmpfs_mounted(self, mock_linux, project_dir, clean_env) -> None:
+        """Test that /run is mounted as tmpfs for fresh runtime state on every start."""
+        config = Config()
+        spec = build_container_spec(config, project_dir, ["bash"])
+        run_mount = next(
+            (m for m in spec.mounts if m.target == "/run" and m.type == "tmpfs"), None
+        )
+        assert run_mount is not None
+
     def test_no_passwd_mount_on_linux(self, mock_linux, project_dir, clean_env) -> None:
         """Test that /etc/passwd and /etc/group are not mounted (user created in entrypoint)."""
         config = Config()
