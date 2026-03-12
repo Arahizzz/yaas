@@ -128,6 +128,10 @@ class BaseRuntime(ABC):
         if spec.pids_limit:
             cmd.extend(["--pids-limit", str(spec.pids_limit)])
 
+        # Pass host supplementary groups (e.g. docker group for socket access)
+        if spec.keep_groups:
+            cmd.extend(["--group-add", "keep-groups"])
+
         # Devices
         if spec.devices:
             for device in spec.devices:

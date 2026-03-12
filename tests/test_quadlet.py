@@ -165,11 +165,15 @@ class TestGenerateQuadlet:
         output = generate_quadlet(spec)
         assert "PidsLimit=1000" in output
 
-    def test_supplementary_groups(self) -> None:
-        spec = _make_spec(groups=[100, 200])
+    def test_keep_groups(self) -> None:
+        spec = _make_spec(keep_groups=True)
         output = generate_quadlet(spec)
-        assert "GroupAdd=100" in output
-        assert "GroupAdd=200" in output
+        assert "GroupAdd=keep-groups" in output
+
+    def test_no_keep_groups(self) -> None:
+        spec = _make_spec(keep_groups=False)
+        output = generate_quadlet(spec)
+        assert "GroupAdd" not in output
 
     def test_init_in_podman_args(self) -> None:
         spec = _make_spec(init=True)

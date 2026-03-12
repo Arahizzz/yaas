@@ -391,8 +391,8 @@ def _print_container_spec(spec: ContainerSpec) -> None:
         for k, v in sorted(spec.labels.items()):
             console.print(f"  {k}: {v}")
 
-    if spec.groups:
-        console.print(f"\n[bold]Groups:[/] {', '.join(str(g) for g in spec.groups)}")
+    if spec.keep_groups:
+        console.print("\n[bold]Groups:[/] keep-groups (host supplementary groups)")
 
 
 # --- Box helpers ---

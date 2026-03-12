@@ -81,10 +81,9 @@ def generate_quadlet(spec: ContainerSpec) -> str:
     if spec.pids_limit:
         lines.append(f"PidsLimit={spec.pids_limit}")
 
-    # Supplementary groups
-    if spec.groups:
-        for gid in spec.groups:
-            lines.append(f"GroupAdd={gid}")
+    # Pass host supplementary groups (e.g. docker group for socket access)
+    if spec.keep_groups:
+        lines.append("GroupAdd=keep-groups")
 
     # PodmanArgs for flags without native quadlet directives
     podman_args: list[str] = []

@@ -49,8 +49,8 @@ class ContainerSpec:
     tty: bool
     stdin_open: bool
 
-    # Supplementary groups (GIDs)
-    groups: list[int] | None = None
+    # Pass host supplementary groups to container (Podman --group-add keep-groups)
+    keep_groups: bool = False
 
     # PID namespace mode
     pid_mode: str | None = None
