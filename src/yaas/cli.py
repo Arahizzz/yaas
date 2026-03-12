@@ -125,6 +125,9 @@ def run(
     podman_docker_socket: bool = typer.Option(
         False, "--podman-docker-socket", help="Start Podman socket (Docker-compatible API)"
     ),
+    docker_host_socket: bool = typer.Option(
+        False, "--docker-host-socket", help="Mount host Docker socket (Docker-outside-Docker)"
+    ),
     clipboard: bool = typer.Option(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
@@ -163,6 +166,7 @@ def run(
         git_config=git_config,
         podman=podman,
         podman_docker_socket=podman_docker_socket,
+        docker_host_socket=docker_host_socket,
         clipboard=clipboard,
         network=network,
         memory=memory,
@@ -425,6 +429,9 @@ def box_create(
     podman_docker_socket: bool = typer.Option(
         False, "--podman-docker-socket", help="Start Podman socket (Docker-compatible API)"
     ),
+    docker_host_socket: bool = typer.Option(
+        False, "--docker-host-socket", help="Mount host Docker socket (Docker-outside-Docker)"
+    ),
     clipboard: bool = typer.Option(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
@@ -464,6 +471,7 @@ def box_create(
         git_config=git_config,
         podman=podman,
         podman_docker_socket=podman_docker_socket,
+        docker_host_socket=docker_host_socket,
         clipboard=clipboard,
         network=network,
         memory=memory,
@@ -548,6 +556,9 @@ def box_config(
     podman_docker_socket: bool = typer.Option(
         False, "--podman-docker-socket", help="Start Podman socket (Docker-compatible API)"
     ),
+    docker_host_socket: bool = typer.Option(
+        False, "--docker-host-socket", help="Mount host Docker socket (Docker-outside-Docker)"
+    ),
     clipboard: bool = typer.Option(
         False, "--clipboard", help="Enable clipboard access for image pasting"
     ),
@@ -582,6 +593,7 @@ def box_config(
         git_config=git_config,
         podman=podman,
         podman_docker_socket=podman_docker_socket,
+        docker_host_socket=docker_host_socket,
         clipboard=clipboard,
         network=network,
         memory=memory,
@@ -788,6 +800,7 @@ def config_cmd(
     console.print(f"[bold]git_config:[/] {cfg.git_config}")
     console.print(f"[bold]podman:[/] {cfg.podman}")
     console.print(f"[bold]podman_docker_socket:[/] {cfg.podman_docker_socket}")
+    console.print(f"[bold]docker_host_socket:[/] {cfg.docker_host_socket}")
     console.print(f"[bold]clipboard:[/] {cfg.clipboard}")
     console.print(f"[bold]network_mode:[/] {cfg.network_mode}")
     console.print(f"[bold]readonly_project:[/] {cfg.readonly_project}")
@@ -895,6 +908,7 @@ def _apply_cli_flags(
     git_config: bool = False,
     podman: bool = False,
     podman_docker_socket: bool = False,
+    docker_host_socket: bool = False,
     clipboard: bool = False,
     network: NetworkMode | None = None,
     memory: str | None = None,
@@ -921,6 +935,8 @@ def _apply_cli_flags(
         target.podman = True
     if podman_docker_socket:
         target.podman_docker_socket = True
+    if docker_host_socket:
+        target.docker_host_socket = True
     if clipboard:
         target.clipboard = True
     if network is not None:

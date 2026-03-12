@@ -16,6 +16,7 @@ from .constants import (
 )
 from .logging import get_logger
 from .platform import (
+    get_container_socket_paths,
     get_ssh_agent_socket,
     get_uid_gid,
     is_linux,
@@ -109,7 +110,7 @@ def build_box_spec(
 
     # Build mounts
     effective_project_dir = Path.cwd() if config.mount_project else None
-    mounts, groups = _build_mounts(
+    mounts = _build_mounts(
         config,
         effective_project_dir,
         home,
@@ -161,7 +162,7 @@ def build_box_spec(
         name=container_name,
         init=True,
         labels=labels,
-        groups=groups or None,
+        keep_groups=config.docker_host_socket,
         pid_mode=config.pid_mode,
         ports=ports or None,
         devices=devices or None,
@@ -200,8 +201,8 @@ def build_container_spec(
 
     skip_shared_volumes = config.base == "none"
 
-    # Build mounts and collect supplementary groups
-    mounts, groups = _build_mounts(
+    # Build mounts
+    mounts = _build_mounts(
         config, project_dir, home, sandbox_home, skip_shared_volumes=skip_shared_volumes
     )
 
@@ -261,7 +262,7 @@ def build_container_spec(
         network_mode=config.network_mode,
         tty=tty,
         stdin_open=stdin_open,
-        groups=groups or None,
+        keep_groups=config.docker_host_socket,
         pid_mode=config.pid_mode,
         ports=ports or None,
         devices=devices or None,
@@ -348,14 +349,13 @@ def _build_mounts(
     sandbox_home: str,
     *,
     skip_shared_volumes: bool = False,
-) -> tuple[list[Mount], list[int]]:
-    """Assemble all mounts and supplementary groups."""
+) -> list[Mount]:
+    """Assemble all mounts."""
     mounts: list[Mount] = [
         # Fresh /run on every start (like systemd tmpfs); prevents stale runtime
         # state (e.g. Podman boot ID cache) from persisting across box restarts.
         Mount("", "/run", type="tmpfs"),
     ]
-    groups: list[int] = []
 
     if project_dir is not None:
         # Add worktree mounts (may signal to skip the project_dir mount)
@@ -376,7 +376,6 @@ def _build_mounts(
     _add_optional_mounts(
         config,
         mounts,
-        groups,
         home,
         sandbox_home,
         fallback_dir,
@@ -391,13 +390,12 @@ def _build_mounts(
         if mount := _parse_mount_spec(mount_spec, fallback_dir):
             mounts.append(mount)
 
-    return mounts, groups
+    return mounts
 
 
 def _add_optional_mounts(
     config: Config,
     mounts: list[Mount],
-    groups: list[int],
     home: Path,
     sandbox_home: str,
     project_dir: Path,
@@ -426,6 +424,9 @@ def _add_optional_mounts(
     if config.ssh_agent:
         _add_ssh_agent(mounts)
 
+    if config.docker_host_socket:
+        _add_docker_host_socket(mounts)
+
     if config.clipboard:
         _add_clipboard_support(mounts)
 
@@ -444,6 +445,21 @@ def _add_ssh_agent(mounts: list[Mount]) -> None:
     known_hosts = Path.home() / ".ssh" / "known_hosts"
     if known_hosts.exists():
         mounts.append(Mount(str(known_hosts), "/etc/ssh/ssh_known_hosts", read_only=True))
+
+
+def _add_docker_host_socket(mounts: list[Mount]) -> None:
+    """Mount host Docker socket for Docker-outside-Docker.
+
+    Auto-detects the Docker socket path and mounts it at /var/run/docker.sock.
+    Socket write access is handled by --group-add keep-groups (passes host
+    supplementary groups, including docker, to the container process).
+    """
+    for sock_path in get_container_socket_paths(docker_only=True):
+        if sock_path.exists():
+            mounts.append(Mount(str(sock_path), "/var/run/docker.sock"))
+            return
+
+    logger.warning("No Docker socket found, docker won't work inside sandbox")
 
 
 def _add_clipboard_support(mounts: list[Mount]) -> None:
@@ -649,6 +665,10 @@ def _build_environment(
         env["GIT_CONFIG_COUNT"] = "1"
         env["GIT_CONFIG_KEY_0"] = "gpg.ssh.program"
         env["GIT_CONFIG_VALUE_0"] = "ssh-keygen"
+
+    # Docker host socket
+    if config.docker_host_socket:
+        env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
 
     # Clipboard support (forward display env vars)
     if config.clipboard:

@@ -14,8 +14,8 @@
 # git_config = false
 # podman = false            # Enable rootless Podman inside container (DinD)
 # podman_docker_socket = false  # Start Podman socket (Docker-compatible API)
+# docker_host_socket = false    # Mount host Docker socket (Docker-outside-Docker)
 # devices = []             # Pass through host devices (e.g., ["/dev/fuse"])
-# mounts = ["/var/run/docker.sock"]  # Docker-outside-Docker (mount host socket)
 # clipboard = false        # Enable clipboard access for image pasting
 
 # Isolation

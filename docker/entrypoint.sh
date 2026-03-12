@@ -39,6 +39,22 @@ if [[ "$SHELL_UID" != "0" ]]; then
 fi
 
 # ============================================================
+# Docker host socket group setup
+# ============================================================
+# If the host Docker socket is mounted, ensure the running user belongs to the
+# socket's group so it can write to it.
+if [[ -S /var/run/docker.sock ]]; then
+    DOCKER_SOCK_GID=$(stat -c '%g' /var/run/docker.sock)
+    if ! getent group "$DOCKER_SOCK_GID" >/dev/null 2>&1; then
+        sudo groupadd -g "$DOCKER_SOCK_GID" docker 2>/dev/null || true
+    fi
+    DOCKER_GROUP_NAME=$(getent group "$DOCKER_SOCK_GID" | cut -d: -f1)
+    if [[ -n "$DOCKER_GROUP_NAME" ]]; then
+        sudo usermod -aG "$DOCKER_GROUP_NAME" "$(getent passwd "$SHELL_UID" | cut -d: -f1)" 2>/dev/null || true
+    fi
+fi
+
+# ============================================================
 # Rootless Podman setup (subuid/subgid for user namespaces)
 # ============================================================
 # Nested podman needs subuid/subgid for the UID that will run it (SHELL_UID).

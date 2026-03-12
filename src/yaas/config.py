@@ -57,6 +57,7 @@ class ContainerSettings:
     git_config: bool | None = None
     podman: bool | None = None
     podman_docker_socket: bool | None = None
+    docker_host_socket: bool | None = None
     clipboard: bool | None = None
     network_mode: str | None = None
     mount_project: bool | None = None
@@ -110,6 +111,7 @@ class Config(ContainerSettings):
     git_config: bool = False
     podman: bool = False
     podman_docker_socket: bool = False
+    docker_host_socket: bool = False
     clipboard: bool = False
     network_mode: str = "bridge"
     mount_project: bool = True

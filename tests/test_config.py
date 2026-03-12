@@ -60,6 +60,7 @@ def test_default_config() -> None:
     assert config.git_config is False
     assert config.podman is False
     assert config.podman_docker_socket is False
+    assert config.docker_host_socket is False
     assert config.network_mode == "bridge"
     assert config.mount_project is True
     assert config.readonly_project is False
@@ -86,6 +87,7 @@ def test_container_settings_defaults() -> None:
     assert settings.git_config is None
     assert settings.podman is None
     assert settings.podman_docker_socket is None
+    assert settings.docker_host_socket is None
     assert settings.clipboard is None
     assert settings.network_mode is None
     assert settings.mount_project is None

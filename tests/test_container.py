@@ -1214,3 +1214,77 @@ class TestBuildPreamble:
         config = Config(preamble=False)
         spec = build_container_spec(config, project_dir, ["bash"])
         assert "YAAS_PREAMBLE" not in spec.environment
+
+
+class TestDockerHostSocket:
+    """Tests for docker_host_socket feature."""
+
+    def test_socket_mounted_when_found(self, mock_linux, project_dir, clean_env) -> None:
+        """When docker_host_socket=True and socket exists, it's mounted at /var/run/docker.sock."""
+        sock = project_dir / "docker.sock"
+        sock.touch()
+
+        with patch(
+            "yaas.container.get_container_socket_paths", return_value=[sock]
+        ), patch.object(Path, "stat") as mock_stat:
+            mock_stat.return_value.st_gid = 999
+            config = Config(docker_host_socket=True)
+            spec = build_container_spec(config, project_dir, ["bash"])
+
+        docker_mount = next(
+            (m for m in spec.mounts if m.target == "/var/run/docker.sock"), None
+        )
+        assert docker_mount is not None
+        assert docker_mount.source == str(sock)
+
+    def test_docker_host_env_set(self, mock_linux, project_dir, clean_env) -> None:
+        """DOCKER_HOST env var is set when docker_host_socket is enabled."""
+        sock = project_dir / "docker.sock"
+        sock.touch()
+
+        with patch(
+            "yaas.container.get_container_socket_paths", return_value=[sock]
+        ):
+            config = Config(docker_host_socket=True)
+            spec = build_container_spec(config, project_dir, ["bash"])
+
+        assert spec.environment["DOCKER_HOST"] == "unix:///var/run/docker.sock"
+
+    def test_no_socket_warns(self, mock_linux, project_dir, clean_env) -> None:
+        """Warning logged when no Docker socket is found."""
+        with patch(
+            "yaas.container.get_container_socket_paths", return_value=[]
+        ):
+            config = Config(docker_host_socket=True)
+            spec = build_container_spec(config, project_dir, ["bash"])
+
+        # No docker mount should be present
+        docker_mount = next(
+            (m for m in spec.mounts if m.target == "/var/run/docker.sock"), None
+        )
+        assert docker_mount is None
+
+    def test_keep_groups_enabled(self, mock_linux, project_dir, clean_env) -> None:
+        """keep_groups is set on spec when docker_host_socket is enabled."""
+        sock = project_dir / "docker.sock"
+        sock.touch()
+
+        with patch(
+            "yaas.container.get_container_socket_paths", return_value=[sock]
+        ):
+            config = Config(docker_host_socket=True)
+            spec = build_container_spec(config, project_dir, ["bash"])
+
+        assert spec.keep_groups is True
+
+    def test_disabled_no_mount(self, mock_linux, project_dir, clean_env) -> None:
+        """When docker_host_socket=False, no docker socket is mounted."""
+        config = Config(docker_host_socket=False)
+        spec = build_container_spec(config, project_dir, ["bash"])
+
+        docker_mount = next(
+            (m for m in spec.mounts if m.target == "/var/run/docker.sock"), None
+        )
+        assert docker_mount is None
+        assert "DOCKER_HOST" not in spec.environment
+        assert spec.keep_groups is False
