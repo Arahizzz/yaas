@@ -268,6 +268,11 @@ def resolve_effective_config(config: Config) -> Config:
         resolved.boxes = config.boxes
         resolved.active_tool = config.active_tool
         resolved.base = base
+        # Preserve CLI-provided lists that were applied after initial resolution
+        resolved.mounts.extend(config.mounts)
+        resolved.ports.extend(config.ports)
+        resolved.devices.extend(config.devices)
+        resolved.env.update(config.env)
     else:
         resolved = replace(config)
 
@@ -290,6 +295,11 @@ def resolve_box_config(config: Config, box_name: str) -> Config:
         resolved.tools = config.tools
         resolved.boxes = config.boxes
         resolved.base = base
+        # Preserve CLI-provided lists that were applied after initial resolution
+        resolved.mounts.extend(config.mounts)
+        resolved.ports.extend(config.ports)
+        resolved.devices.extend(config.devices)
+        resolved.env.update(config.env)
     else:
         resolved = replace(config)
 

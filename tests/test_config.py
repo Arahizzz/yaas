@@ -723,6 +723,38 @@ def test_resolve_mount_project_override() -> None:
     assert result.mount_project is False
 
 
+def test_resolve_base_none_preserves_cli_mounts() -> None:
+    """Test that resolve_effective_config preserves CLI mounts/ports/devices/env for base=none."""
+    config = Config(
+        base="none",
+        active_tool="mytool",
+        tools={"mytool": ToolConfig()},
+        mounts=["type=bind,source=/tmp/test,target=/tmp/test"],
+        ports=["8080:80"],
+        devices=["/dev/fuse"],
+        env={"MY_VAR": "value"},
+    )
+    result = resolve_effective_config(config)
+    assert result.network_mode == "none"  # base=none applied
+    assert "type=bind,source=/tmp/test,target=/tmp/test" in result.mounts
+    assert "8080:80" in result.ports
+    assert "/dev/fuse" in result.devices
+    assert result.env["MY_VAR"] == "value"
+
+
+def test_resolve_base_none_idempotent_mounts() -> None:
+    """Test that calling resolve_effective_config twice doesn't duplicate or lose mounts."""
+    config = Config(
+        base="none",
+        active_tool="mytool",
+        tools={"mytool": ToolConfig()},
+        mounts=["type=bind,source=/tmp/test,target=/tmp/test"],
+    )
+    first = resolve_effective_config(config)
+    second = resolve_effective_config(first)
+    assert second.mounts == ["type=bind,source=/tmp/test,target=/tmp/test"]
+
+
 def test_mount_project_from_toml() -> None:
     """Test that mount_project is parsed from TOML config."""
     config = _load_project_toml("""
