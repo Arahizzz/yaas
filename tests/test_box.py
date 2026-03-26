@@ -277,8 +277,8 @@ class TestBuildBoxSpec:
     def test_no_project_mount_by_default(self, mock_linux, clean_env) -> None:
         config = Config(boxes={"shell": BoxSpec()})
         spec = build_box_spec(config, "shell", "yaas-box-test")
-        # Working dir should be /home (not a project dir)
-        assert spec.working_dir == "/home"
+        # Working dir should be /workspace (not a project dir)
+        assert spec.working_dir == "/workspace"
 
     def test_shared_volumes_present_default(self, mock_linux, clean_env) -> None:
         """Default base includes shared volumes (home, nix)."""

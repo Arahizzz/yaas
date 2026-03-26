@@ -123,7 +123,7 @@ def build_box_spec(
     environment["YAAS_BOX"] = "1"
 
     container_user = f"{uid}:{gid}"
-    working_dir = str(effective_project_dir) if effective_project_dir else sandbox_home
+    working_dir = str(effective_project_dir) if effective_project_dir else "/workspace"
 
     # Labels for tracking
     labels = {
@@ -214,7 +214,7 @@ def build_container_spec(
     # Use real UID:GID. Runtimes pass as YAAS_HOST_UID/GID env vars for entrypoint.
     container_user = f"{uid}:{gid}"
 
-    working_dir = str(project_dir) if project_dir else sandbox_home
+    working_dir = str(project_dir) if project_dir else "/workspace"
 
     # Collect ports (global + tool-specific)
     ports = list(config.ports)

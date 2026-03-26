@@ -1067,10 +1067,10 @@ class TestNoProjectMode:
     """Tests for building container specs without a project directory."""
 
     def test_no_project_working_dir(self, mock_linux, clean_env) -> None:
-        """When project_dir is None, working_dir is sandbox home."""
+        """When project_dir is None, working_dir is /workspace."""
         config = Config()
         spec = build_container_spec(config, None, ["bash"])
-        assert spec.working_dir == "/home"
+        assert spec.working_dir == "/workspace"
 
     def test_no_project_skips_project_mount(self, mock_linux, clean_env, tmp_path: Path) -> None:
         """When project_dir is None, no project directory is mounted."""
