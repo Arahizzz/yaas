@@ -15,10 +15,22 @@ RUN dnf group install -y development-tools && dnf install -y \
     git-lfs \
     # Utilities
     wget libicu nano \
+    # Process / network diagnostics
+    procps-ng iproute \
     # Clipboard tools
     wl-clipboard xclip \
     # Podman DinD (baked in, no nix runtime install)
     podman fuse-overlayfs \
+    # Chrome/Chromium runtime dependencies
+    nss nspr nss-util \
+    gtk3 atk at-spi2-atk at-spi2-core \
+    mesa-libgbm libdrm \
+    libX11 libXcomposite libXcursor libXdamage libXext \
+    libXfixes libXi libXrandr libXScrnSaver libXtst libxcb libxkbcommon \
+    cairo pango \
+    cups-libs alsa-lib dbus-libs vulkan-loader \
+    # Fonts (required by Chrome for rendering)
+    fontconfig liberation-fonts \
     && dnf clean all \
     && git lfs install
 
